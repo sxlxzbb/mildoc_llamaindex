@@ -1,0 +1,68 @@
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    """应用配置"""
+    # 文件存储临时路径
+    TMP_FILE_DIR: str = os.getenv("TMP_FILE_DIR")
+
+    # minio
+    MINIO_ENDPOINT: str = os.getenv("MINIO_ENDPOINT")
+    MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY")
+    MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY")
+    MINIO_BUCKET: str = os.getenv("MINIO_BUCKET")
+    MINIO_REGION: str = os.getenv("MINIO_REGION")
+    MINIO_USE_VIRTUAL_HOST: bool = os.getenv('MINIO_USE_VIRTUAL_HOST', 'false').lower() == 'true'
+    MINIO_USE_SSL: bool = os.getenv("MINIO_USE_SSL", 'false').lower() == 'true'
+
+    # minvus
+    MILVUS_HOST: str = os.getenv("MILVUS_HOST")
+    MILVUS_PORT: int = os.getenv("MILVUS_PORT")
+    MILVUS_USER: str = os.getenv("MILVUS_USER")
+    MILVUS_PASSWORD: str = os.getenv("MILVUS_PASSWORD")
+    MILVUS_DATABASE: str = os.getenv("MILVUS_DATABASE")
+    MILVUS_COLLECTION: str = os.getenv("MILVUS_COLLECTION")
+    MILVUS_INDEX_NAME: str = os.getenv("MILVUS_INDEX_NAME")
+    MILVUS_VECTOR_DIM: int = int(os.getenv("MILVUS_VECTOR_DIM"))
+
+    # llm
+    LLM_MODEL_NAME: str = os.getenv("LLM_MODEL_NAME")
+    LLM_API_KEY: str = os.getenv("LLM_API_KEY")
+    LLM_BASE_URL: str = os.getenv("LLM_BASE_URL")
+    TEMPERATURE: float = 0.1
+
+    # embedding
+    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY")
+    OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL")
+    ENBEDDING_MODEL: str = os.getenv("ENBEDDING_MODEL")
+
+    # oss
+    OSS_ACCESS_KEY_ID: str = os.getenv("OSS_ACCESS_KEY_ID")
+    OSS_ACCESS_KEY_SECRET: str = os.getenv("OSS_ACCESS_KEY_SECRET")
+    OSS_ENDPOINT: str = os.getenv("OSS_ENDPOINT")
+    OSS_BUCKET_NAME: str = os.getenv("OSS_BUCKET_NAME")
+
+    # soffice doc文件转pdf文档工具路径
+    SOFFICE_PATH: str = os.getenv("SOFFICE_PATH")
+
+    # 文档分块
+    CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "800"))
+    OVERLAP_SIZE: int = int(os.getenv("OVERLAP_SIZE", "200"))
+    TITLE_EXTRACTOR_NODES: int = int(os.getenv("TITLE_EXTRACTOR_NODES"))
+
+    # redis
+    REDIS_HOST: str = os.getenv("REDIS_HOST")
+    REDIS_PORT: int = int(os.getenv("REDIS_PORT"))
+    REDIS_INDEX_NAME_SPACE: str = os.getenv("REDIS_INDEX_NAME_SPACE")
+    REDIS_DOC_NAME_SPACE: str = os.getenv("REDIS_DOC_NAME_SPACE")
+    REDIS_CACHE: str = os.getenv("REDIS_CACHE")
+
+    # mysql
+    MYSQL_HOST: str = os.getenv("MYSQL_HOST")
+    MYSQL_PORT: int = int(os.getenv("MYSQL_PORT"))
+    MYSQL_USER: str = os.getenv("MYSQL_USER")
+    MYSQL_PASSWORD: str = os.getenv("MYSQL_PASSWORD")
+    MYSQL_DATABASE: str = os.getenv("MYSQL_DATABASE")

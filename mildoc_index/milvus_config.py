@@ -1,8 +1,8 @@
 from dataclasses import dataclass
 from enum import Enum
 
-from llama_index.vector_stores.milvus import MilvusVectorStore
-from pymilvus import DataType, Function, FunctionType
+from pymilvus import DataType
+from llama_index.vector_stores.milvus.utils import BM25BuiltInFunction
 
 from config.config import Config
 from logger.logging import setup_logging
@@ -27,100 +27,42 @@ class MilvusDocumentField(str, Enum):
     DOC_TYPE = "doc_type" # 文档类型
     DOC_MD5 = "doc_md5"   # 文档MD5
     DOC_LENGTH = "doc_length" # 文档字节数
-    CONTENT = "content"   # 文档分段内容
+    CONTENT = "text"      # 文档分段内容（Milvus 文本字段名；必须等于节点 node.dict() 的键 "text"，
+                           # 因为 MilvusVectorStore 内部用 node.dict()[text_key] 取文本，且 BM25 也依赖此字段名）
     CONTENT_VECTOR = "content_vector"   # 分段内容向量（dense，embedding模型生成）
     CONTENT_SPARSE = "content_sparse"   # 分段内容稀疏向量（BM25 Function服务端自动生成）
     EMBEDDING_MODEL = "embedding_model" # embedding模型名称
 
 
-def initialize_milvus_schema():
-    # 定义schema
-    schema = MilvusVectorStore.create_schema(
-        auto_id=True,  # 自动生生ID
-        enable_dynamic_field=False
-    )
+# 除主键 id / 文本 content / 向量 content_vector 之外的标量字段
+# 注意：新版本 MilvusVectorStore 会自动创建 id(主键)、content(文本)、
+# content_vector(稠密向量)、content_sparse(稀疏向量) 等字段，
+# 这里只需声明额外的业务标量字段即可。
+SCALAR_FIELD_NAMES = [
+    MilvusDocumentField.DOC_NAME.value,
+    MilvusDocumentField.DOC_PATH_NAME.value,
+    MilvusDocumentField.DOC_TYPE.value,
+    MilvusDocumentField.DOC_MD5.value,
+    MilvusDocumentField.DOC_LENGTH.value,
+    MilvusDocumentField.EMBEDDING_MODEL.value,
+]
+SCALAR_FIELD_TYPES = [
+    DataType.VARCHAR,   # doc_name
+    DataType.VARCHAR,   # doc_path_name
+    DataType.VARCHAR,   # doc_type
+    DataType.VARCHAR,   # doc_md5
+    DataType.INT64,     # doc_length
+    DataType.VARCHAR,   # embedding_model
+]
 
-    # 添加字段
-    # 主键ID字段（自动生成）
-    schema.add_field(
-        field_name=MilvusDocumentField.ID.value,
-        datatype=DataType.INT64,
-        is_primary=True,
-        auto_id=True
-    )
 
-    # 文档名称
-    schema.add_field(
-        field_name=MilvusDocumentField.DOC_NAME.value,
-        datatype=DataType.VARCHAR,
-        max_length=500
-    )
-
-    # 文档路径（含名字）
-    schema.add_field(
-        field_name=MilvusDocumentField.DOC_PATH_NAME.value,
-        datatype=DataType.VARCHAR,
-        max_length=1000
-    )
-
-    # 文档类型
-    schema.add_field(
-        field_name=MilvusDocumentField.DOC_TYPE.value,
-        datatype=DataType.VARCHAR,
-        max_length=50
-    )
-
-    # 文档MD5
-    schema.add_field(
-        field_name=MilvusDocumentField.DOC_MD5.value,
-        datatype=DataType.VARCHAR,
-        max_length=32
-    )
-
-    # 文档字节数
-    schema.add_field(
-        field_name=MilvusDocumentField.DOC_LENGTH.value,
-        datatype=DataType.INT64,
-    )
-
-    # 文档内容（开启分词器，供BM25全文检索使用）
-    schema.add_field(
-        field_name=MilvusDocumentField.CONTENT.value,
-        datatype=DataType.VARCHAR,
-        max_length=65535,  # 最大长度
-        enable_analyzer=True,  # 开启分词，BM25 Function依赖此项
-        analyzer_params={"tokenizer": "jieba"}  # 中文分词
-    )
-
-    # 内容向量（text-embedding-v4的维度是1536）
-    schema.add_field(
-        field_name=MilvusDocumentField.CONTENT_VECTOR.value,
-        datatype=DataType.FLOAT_VECTOR,
-        dim=Config.MILVUS_VECTOR_DIM
-    )
-
-    # embedding模型名称
-    schema.add_field(
-        field_name=MilvusDocumentField.EMBEDDING_MODEL.value,
-        datatype=DataType.VARCHAR,
-        max_length=100
-    )
-
-    # 稀疏向量字段（BM25 Function的输出字段，由服务端自动生成，插入时无需提供）
-    schema.add_field(
-        field_name=MilvusDocumentField.CONTENT_SPARSE.value,
-        datatype=DataType.SPARSE_FLOAT_VECTOR
-    )
-
-    # 定义BM25 Function：输入content文本，服务端自动分词并生成稀疏向量到content_sparse
-    bm25_function = Function(
-        name="content_bm25",
+def build_bm25_function() -> BM25BuiltInFunction:
+    """BM25 内置函数：服务端自动对 content 分词，生成稀疏向量到 content_sparse。"""
+    return BM25BuiltInFunction(
         input_field_names=[MilvusDocumentField.CONTENT.value],
         output_field_names=[MilvusDocumentField.CONTENT_SPARSE.value],
-        function_type=FunctionType.BM25
+        analyzer_params={"tokenizer": "jieba"},  # 中文分词
     )
-    schema.add_function(bm25_function)
 
-    return schema
 
 

@@ -3,7 +3,6 @@ from pathlib import Path
 import torch
 import os
 
-from lightrag.utils import setup_logger
 from llama_index.core import (
     VectorStoreIndex,
     StorageContext,
@@ -15,7 +14,6 @@ from llama_index.core.node_parser import SentenceSplitter, MarkdownNodeParser, M
 from llama_index.core.extractors import TitleExtractor
 from llama_index.core.ingestion import IngestionPipeline, IngestionCache, DocstoreStrategy
 from llama_index.core.schema import Document
-from llama_index.embeddings.dashscope import DashScopeEmbedding
 from llama_index.embeddings.openai import OpenAIEmbedding
 from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.storage.docstore.redis import RedisDocumentStore
@@ -28,9 +26,9 @@ from llama_index.vector_stores.milvus import MilvusVectorStore
 
 import milvus_config
 from config.config import Config
+from logger.logging import setup_logging
 
-
-logger = setup_logger(__name__)
+logger = setup_logging()
 
 class DocumentIngestionPipeline:
     """文档摄取管道"""
@@ -72,10 +70,14 @@ class DocumentIngestionPipeline:
         )
 
         # 嵌入模型
-        Settings.embed_model = DashScopeEmbedding(
-            model_name=Config.ENBEDDING_MODEL,
+        # 用 OpenAIEmbedding 走百炼的 OpenAI 兼容接口（OPENAI_BASE_URL），
+        # 该接口支持 dimensions 参数，可强制输出维度与 Milvus 的 MILVUS_VECTOR_DIM 对齐。
+        # 必须用 model_name= 而非 model=，否则会触发 OpenAIEmbeddingModelType 枚举校验报错。
+        Settings.embed_model = OpenAIEmbedding(
+            model_name=Config.ENBEDDING_MODEL,      # "text-embedding-v4"，绕过枚举校验
+            dimensions=Config.MILVUS_VECTOR_DIM,    # 768，透传给 API，确保与 Milvus 维度一致
             api_key=Config.OPENAI_API_KEY,
-            dimensions=Config.MILVUS_VECTOR_DIM
+            api_base=Config.OPENAI_BASE_URL,
         )
 
 
@@ -95,21 +97,31 @@ class DocumentIngestionPipeline:
         )
 
         # 初始化向量存储
+        # 注意：llama-index-vector-stores-milvus >= 1.0 改为参数式建 schema，
+        # 不再接收 schema=/text_field=/vector_field= 参数，由 store 自动构建。
         self.milvus_vector_store = MilvusVectorStore(
             uri=f"http://{Config.MILVUS_HOST}:{Config.MILVUS_PORT}",
             token=None,  # 用的是 user/password 认证，所以 token 留空
-            user=Config.MILVUS_USER,
-            password=Config.MILVUS_PASSWORD,
-            db_name=Config.MILVUS_DATABASE,  # 指定数据库名
+            user=Config.MILVUS_USER,        # 经 **kwargs 透传给 MilvusClient
+            password=Config.MILVUS_PASSWORD,  # 经 **kwargs 透传给 MilvusClient
+            db_name=Config.MILVUS_DATABASE,  # 指定数据库名，经 **kwargs 透传
             collection_name=Config.MILVUS_COLLECTION,  # 集合名称，建议明确指定
             dim=Config.MILVUS_VECTOR_DIM,    # 必须与嵌入模型维度一致（比如百炼 text-embedding-v4）
-            # 传入自定义 schema
-            schema=milvus_config.initialize_milvus_schema(),
-            # 关键：告诉 LlamaIndex 使用哪个字段作为文本内容
-            text_field=milvus_config.MilvusDocumentField.CONTENT,
+            # 关键：文本字段名必须是 "text"（即节点 node.dict() 的键），
+            # MilvusVectorStore 内部用 node.dict()[text_key] 取文本；同时 BM25 的 input_field_names
+            # 也指向它，才能对该字段开启分词器。这里通过枚举统一为 "text"。
+            text_key=milvus_config.MilvusDocumentField.CONTENT.value,
             # 关键：告诉 LlamaIndex 使用哪个字段作为向量字段
             # 默认是 "embedding"，这里改为我自己定义的 "content_vector"
-            vector_field=milvus_config.MilvusDocumentField.CONTENT_VECTOR,
+            embedding_field=milvus_config.MilvusDocumentField.CONTENT_VECTOR.value,
+            # 稠密 + 稀疏（BM25）混合检索
+            enable_dense=True,
+            enable_sparse=True,
+            sparse_embedding_field=milvus_config.MilvusDocumentField.CONTENT_SPARSE.value,
+            sparse_embedding_function=milvus_config.build_bm25_function(),
+            # 额外的业务标量字段
+            scalar_field_names=milvus_config.SCALAR_FIELD_NAMES,
+            scalar_field_types=milvus_config.SCALAR_FIELD_TYPES,
             # 如果集合已存在，不覆盖
             overwrite=False,   # 设为 False 防止误删已有数据
         )
@@ -190,7 +202,7 @@ class DocumentIngestionPipeline:
             file_name = doc.metadata.get("file_name")
             content_type = doc.metadata.get("content_type")
             if not content_type and file_name:
-                content_type = os.path.splitext(os.path.basename(file_name))[0]
+                content_type = os.path.splitext(os.path.basename(file_name))[1]
 
             if not content_type:
                 logger.info(f"无法确定文件类型,file_name:{file_name}")
@@ -199,11 +211,11 @@ class DocumentIngestionPipeline:
             logger.info(f"开始处理文档:{file_name}")
 
             pipeline_nodes = []
-            if content_type == 'markdown':
+            if content_type in ('.markdown', '.md'):
                 pipeline_nodes = self.markdown_pipeline.run(documents=[doc], show_progress=True)
                 logger.info(f"文件[{file_name}]处理完成,生成了 {len(pipeline_nodes)} 个节点")
 
-            if content_type == 'text' or content_type == 'txt':
+            if content_type in ('.text', '.txt'):
                 pipeline_nodes = self.text_pipeline.run(documents=[doc], show_progress=True)
                 logger.info(f"文件[{file_name}]处理完成,生成了 {len(pipeline_nodes)} 个节点")
 

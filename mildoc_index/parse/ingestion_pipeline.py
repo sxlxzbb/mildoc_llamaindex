@@ -119,9 +119,6 @@ class DocumentIngestionPipeline:
             enable_sparse=True,
             sparse_embedding_field=milvus_config.MilvusDocumentField.CONTENT_SPARSE.value,
             sparse_embedding_function=milvus_config.build_bm25_function(),
-            # 额外的业务标量字段
-            scalar_field_names=milvus_config.SCALAR_FIELD_NAMES,
-            scalar_field_types=milvus_config.SCALAR_FIELD_TYPES,
             # 如果集合已存在，不覆盖
             overwrite=False,   # 设为 False 防止误删已有数据
         )
@@ -240,3 +237,4 @@ if __name__ == '__main__':
     ingestion = DocumentIngestionPipeline()
     result = ingestion.ingest_document(docs[0])
     print(f"文档摄取结果:{result}")
+

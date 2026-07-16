@@ -34,27 +34,30 @@ class MilvusDocumentField(str, Enum):
     EMBEDDING_MODEL = "embedding_model" # embedding模型名称
 
 
-# 除主键 id / 文本 content / 向量 content_vector 之外的标量字段
-# 注意：新版本 MilvusVectorStore 会自动创建 id(主键)、content(文本)、
-# content_vector(稠密向量)、content_sparse(稀疏向量) 等字段，
-# 这里只需声明额外的业务标量字段即可。
-SCALAR_FIELD_NAMES = [
-    MilvusDocumentField.DOC_NAME.value,
-    MilvusDocumentField.DOC_PATH_NAME.value,
-    MilvusDocumentField.DOC_TYPE.value,
-    MilvusDocumentField.DOC_MD5.value,
-    MilvusDocumentField.DOC_LENGTH.value,
-    MilvusDocumentField.EMBEDDING_MODEL.value,
-]
-SCALAR_FIELD_TYPES = [
-    DataType.VARCHAR,   # doc_name
-    DataType.VARCHAR,   # doc_path_name
-    DataType.VARCHAR,   # doc_type
-    DataType.VARCHAR,   # doc_md5
-    DataType.INT64,     # doc_length
-    DataType.VARCHAR,   # embedding_model
-]
-
+# 说明：不再显式声明业务标量字段（doc_name / doc_path_name / doc_type / doc_md5 /
+# doc_length / embedding_model）。原因：
+#   1) 新版本 MilvusVectorStore 建 schema 时 enable_dynamic_field=True，
+#      节点的所有 metadata 会自动存进动态 JSON 字段，信息不丢失；
+#   2) 当前 ingestion pipeline 并未给节点设置这些 metadata key，显式声明成
+#      非 nullable 字段会导致插入时报 "Insert missed an field" 错误。
+# 若后续需要按这些字段做高效过滤/索引，请在节点 metadata 中填充对应 key，
+# 再在此处声明 scalar_field_names / scalar_field_types 即可。
+# SCALAR_FIELD_NAMES = [
+#     MilvusDocumentField.DOC_NAME.value,
+#     MilvusDocumentField.DOC_PATH_NAME.value,
+#     MilvusDocumentField.DOC_TYPE.value,
+#     MilvusDocumentField.DOC_MD5.value,
+#     MilvusDocumentField.DOC_LENGTH.value,
+#     MilvusDocumentField.EMBEDDING_MODEL.value,
+# ]
+# SCALAR_FIELD_TYPES = [
+#     DataType.VARCHAR,   # doc_name
+#     DataType.VARCHAR,   # doc_path_name
+#     DataType.VARCHAR,   # doc_type
+#     DataType.VARCHAR,   # doc_md5
+#     DataType.INT64,     # doc_length
+#     DataType.VARCHAR,   # embedding_model
+# ]
 
 def build_bm25_function() -> BM25BuiltInFunction:
     """BM25 内置函数：服务端自动对 content 分词，生成稀疏向量到 content_sparse。"""

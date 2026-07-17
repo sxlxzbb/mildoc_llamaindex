@@ -204,12 +204,11 @@ class DocumentIngestionPipeline:
 
             logger.info(f"开始处理文档:{file_name}")
 
-            pipeline_nodes = []
             if file_type in ('.markdown', '.md'):
                 pipeline_nodes = self.markdown_pipeline.run(documents=[doc], show_progress=True)
                 logger.info(f"文件[{file_name}]处理完成,生成了 {len(pipeline_nodes)} 个节点")
 
-            if file_type in ('.text', '.txt'):
+            else:
                 pipeline_nodes = self.text_pipeline.run(documents=[doc], show_progress=True)
                 logger.info(f"文件[{file_name}]处理完成,生成了 {len(pipeline_nodes)} 个节点")
 

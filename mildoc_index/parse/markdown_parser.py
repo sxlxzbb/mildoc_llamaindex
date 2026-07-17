@@ -5,6 +5,7 @@ from llama_index.readers.file import MarkdownReader
 
 from logger.logging import setup_logging
 from parse.base_parser import BaseParser
+from util.file_type_enum import FileType
 
 logger = setup_logging()
 
@@ -21,6 +22,7 @@ class MarkdownParser(BaseParser):
         # 使用确定性的 doc_id（= minio 路径），与删除时保持一致，便于按路径删除
         doc.id_ = doc_path_name
         doc.metadata['file_path'] = doc_path_name
+        doc.metadata['file_type'] = FileType.MARKDOWN
 
         return docs
 

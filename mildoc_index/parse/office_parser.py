@@ -45,6 +45,8 @@ class OfficeParser(BaseParser):
                 # 使用默认解析器
                 return self.default_parse(file_path, doc_path_name)
 
+            return pdf_parse_result
+
         except Exception:
             logger.exception(f"OfficeParser.parse异常")
 

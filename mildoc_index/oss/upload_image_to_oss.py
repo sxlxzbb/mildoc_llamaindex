@@ -83,47 +83,47 @@ class UploadImageToOSS:
             logger.error(f"上传OSS异常，local_path:{local_path}, remote_path:{remote_path}", e)
 
 
-    def process_markdown_with_threadpoll(self, md_file_path: str) -> str | None:
+    def upload_markdown_image_to_oss(self, md_content: str, file_path: str) -> str | None:
         """
-        使用线程池处理Markdown
-        :param md_file_path:
+        使用线程池处理Markdown中的图片（将图片识别出来，然后上传到oss）
+        :param md_content: markdown文件内容
+        :param file_path: 文件路径
         :return:
         """
-        # 读取文件
-        if not os.path.exists(md_file_path):
-            logger.info(f"markdown文件不存在:{md_file_path}")
-            return None
 
         start_time = int(time.time() * 1000)
-        logger.info(f"开始替换markdown中的图片:{md_file_path}")
-        with open(md_file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
+
+        file_name = os.path.basename(file_path)
+
+        if not md_content:
+            logger.info(f"图片上传oss,入参Markdown文件内容为空:{file_name}")
+            return None
 
         # 提取图片
         pattern = r'!\[(.*?)\]\((.*?)\)'
-        images = re.findall(pattern, content)
+        images = re.findall(pattern, md_content)
 
         if not images:
-            logger.info(f"该markdown文件没有引用图片：{md_file_path}")
-            return content
+            logger.info(f"图片上传oss,该markdown文件没有引用图片：{file_name}")
+            return md_content
 
-        logger.info(f"{os.path.basename(md_file_path)}找到{len(images)}张图片")
+        file_dir = os.path.dirname(file_name)
+
+        logger.info(f"{os.path.basename(file_name)}找到{len(images)}张图片")
 
         # 准备上传
-        md_dir = os.path.dirname(md_file_path)
+        # md_dir = os.path.dirname(md_file_path)
         tasks = []
         for alt_text, local_path in images:
-            full_path = os.path.join(md_dir, local_path)
+            full_path = os.path.join(file_dir, local_path)
             if not os.path.exists(full_path):
                 logger.error(f"本地不存在图片:{full_path}")
                 continue
 
             # OSS远程路径
-            remote_path = self.remote_path
-            if not remote_path:
-                remote_path = local_path.replace('\\', '/')
-                if remote_path.startswith('./'):
-                    remote_path = remote_path[2:]
+            remote_path = local_path.replace('\\', '/')
+            if remote_path.startswith('./'):
+                remote_path = remote_path[2:]
 
             tasks.append((full_path, remote_path))
 
@@ -133,8 +133,6 @@ class UploadImageToOSS:
         # 提交所有任务
         future_to_task = {executor.submit(self._upload_single_image_sync, task): task for task in tasks}
 
-        # 使用tqdm显示进度
-        # with tqdm(total=len(tasks), desc="上传图片") as pbar:
         for future in concurrent.futures.as_completed(future_to_task):
             result = future.result()
             if not result:
@@ -155,21 +153,21 @@ class UploadImageToOSS:
                 return f"![{alt_text1}]({url_map[local_path1]})"
             return match.group(0)
 
-        new_md_content = re.sub(pattern, replace_fn, content)
+        new_md_content = re.sub(pattern, replace_fn, md_content)
 
-        logger.info(f"图片替换完成,{os.path.basename(md_file_path)}, 耗时:{int(time.time() * 1000) - start_time}ms")
+        logger.info(f"图片替换完成,{file_name}, 耗时:{int(time.time() * 1000) - start_time}ms")
 
         return new_md_content
 
 
-if __name__ == '__main__':
-    upload = UploadImageToOSS()
-    md_file_path = r'/test_data/MongoDB-test.md'
-    new_content = upload.process_markdown_with_threadpoll(md_file_path)
-
-    output_path = md_file_path.replace('.md', '_online.md')
-    with open(output_path, 'w', encoding='utf-8') as f:
-        f.write(new_content)
-
-    print(f"📄 ✅ 处理完成！输出文件: {output_path}")
+# if __name__ == '__main__':
+#     upload = UploadImageToOSS()
+#     md_file_path = r'/test_data/MongoDB-test.md'
+#     new_content = upload.process_markdown_with_threadpoll(md_file_path)
+#
+#     output_path = md_file_path.replace('.md', '_online.md')
+#     with open(output_path, 'w', encoding='utf-8') as f:
+#         f.write(new_content)
+#
+#     print(f"📄 ✅ 处理完成！输出文件: {output_path}")
 

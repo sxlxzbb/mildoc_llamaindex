@@ -1,30 +1,24 @@
 from typing import List, Optional, Tuple
-from pathlib import Path
-import torch
 import os
 
 from llama_index.core import (
     VectorStoreIndex,
     StorageContext,
     Settings,
-    SimpleDirectoryReader,
-    load_index_from_storage
+    SimpleDirectoryReader
 )
-from llama_index.core.node_parser import SentenceSplitter, MarkdownNodeParser, MarkdownElementNodeParser
+from llama_index.core.node_parser import SentenceSplitter, MarkdownNodeParser
 from llama_index.core.extractors import TitleExtractor
 from llama_index.core.ingestion import IngestionPipeline, IngestionCache, DocstoreStrategy
 from llama_index.core.schema import Document
 from llama_index.embeddings.openai import OpenAIEmbedding
-from llama_index.vector_stores.chroma import ChromaVectorStore
 from llama_index.storage.docstore.redis import RedisDocumentStore
 from llama_index.storage.index_store.redis import RedisIndexStore
 from llama_index.storage.kvstore.redis import RedisKVStore as RedisCache
-import chromadb
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 from llama_index.llms.dashscope import DashScope
 from llama_index.vector_stores.milvus import MilvusVectorStore
 
-import milvus_config
+from milvus import milvus_config
 from config.config import Config
 from logger.logging import setup_logging
 
@@ -44,9 +38,6 @@ class DocumentIngestionPipeline:
 
         # 2. 创建不同类型的 Pipeline
         self._create_pipelines()
-
-        # 3. 初始化 PDF 处理器
-        # self.pdf_processor = MultimodalPDFProcessor()
 
         # 创建 StorageContext
         self.storage_context = StorageContext.from_defaults(
@@ -119,6 +110,9 @@ class DocumentIngestionPipeline:
             enable_sparse=True,
             sparse_embedding_field=milvus_config.MilvusDocumentField.CONTENT_SPARSE.value,
             sparse_embedding_function=milvus_config.build_bm25_function(),
+            # 额外的业务标量字段
+            scalar_field_names=milvus_config.SCALAR_FIELD_NAMES,
+            scalar_field_types=milvus_config.SCALAR_FIELD_TYPES,
             # 如果集合已存在，不覆盖
             overwrite=False,   # 设为 False 防止误删已有数据
         )
@@ -229,6 +223,31 @@ class DocumentIngestionPipeline:
             logger.exception('文档摄取异常')
             error_msg = f"文档摄取失败: {str(e)}"
             return "error", error_msg, ""
+
+
+    def ingest_documents(self, docs: List[Document]):
+        """
+        批量摄取文档
+        :param docs:
+        :return:
+        """
+        if not docs:
+            logger.info(f"批量文档摄取，入参文档列表为空")
+            return None, None
+
+        fail_docs = []
+        success_docs = []
+        for doc in docs:
+            is_success, error_msg, nodes = self.ingest_document(doc)
+            if 'success' != is_success:
+                fail_docs.append(doc.metadata.get('file_name', 'unknown doc name'))
+            else:
+                success_docs.append(doc.metadata.get('file_name', 'unknown doc name'))
+
+        logger.info(f"文档摄取完成，成功文档：{success_docs}, 失败文档：{fail_docs}")
+
+        return success_docs, fail_docs
+
 
 
 if __name__ == '__main__':

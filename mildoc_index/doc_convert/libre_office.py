@@ -2,18 +2,15 @@ import os
 import subprocess
 import time
 
-from dotenv import load_dotenv
-
+from config.config import Config
 from logger.logging import setup_logging
-
-load_dotenv()
 
 logger = setup_logging()
 
 class LibreOffice:
     def __init__(self):
-        self.soffice_path = os.getenv('SOFFICE_PATH')
-        self.use_libre_office = os.getenv('USE_LIBRE_OFFICE', "false") == 'true'
+        self.soffice_path = Config.SOFFICE_PATH
+        self.use_libre_office = Config.USE_LIBRE_OFFICE
 
 
     def convert_doc_to_pdf(self, file_path: str) -> str | None:

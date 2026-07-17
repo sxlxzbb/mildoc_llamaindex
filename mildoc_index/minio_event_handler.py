@@ -6,12 +6,13 @@ import os
 from typing import Dict, Any, List
 
 from dotenv import load_dotenv
+from llama_index.core import Document
 from minio import Minio
 
-from embedding import EmbeddingTool
+from config.config import Config
 from logger.logging import setup_logging
-from milvus_api import MilvusAPI, MilvusDocument
-from parser.simple_object_parser import SimpleObjectParser
+from parse.ingestion_pipeline import DocumentIngestionPipeline
+from parse.simple_object_parser import SimpleObjectParser
 
 load_dotenv()
 
@@ -29,11 +30,11 @@ MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'false').lower() == 'true'
 # 获取Minion客户端
 def _get_minio_client() -> Minio:
     client = Minio(
-        endpoint=MINIO_ENDPOINT,
-        access_key=MINIO_ACCESS_KEY,
-        secret_key=MINIO_SECRET_KEY,
-        secure=MINIO_USE_SSL,
-        region=MINIO_REGION
+        endpoint=Config.MINIO_ENDPOINT,
+        access_key=Config.MINIO_ACCESS_KEY,
+        secret_key=Config.MINIO_SECRET_KEY,
+        secure=Config.MINIO_USE_SSL,
+        region=Config.MINIO_REGION
     )
 
     if MINIO_USE_VIRTUAL_HOST:
@@ -49,7 +50,7 @@ class MinioEventHandler:
         Args:
             bucket_name(str): 要监听的桶名称，默认从环境变量读取
         """
-        self.bucket_name = bucket_name or os.getenv("MINIO_BUCKET", "mildoc")
+        self.bucket_name = bucket_name or Config.MINIO_BUCKET
 
         # 初始化各个组件
         self.minio_client = _get_minio_client()
@@ -58,13 +59,16 @@ class MinioEventHandler:
         logger.info("初始化解析器...")
         self.parser: SimpleObjectParser = SimpleObjectParser(minio_client=self.minio_client)
 
-        # 初始化Milvus
-        logger.info("初始化Milvus...")
-        self.milvus_api: MilvusAPI = MilvusAPI()
+        logger.info("初始化文档摄取器")
+        self.ingestion = DocumentIngestionPipeline()
 
-        # 测试embedding工具
-        logger.info("初始化embedding工具...")
-        self.embedding_tool: EmbeddingTool = EmbeddingTool()
+        # 初始化Milvus
+        # logger.info("初始化Milvus...")
+        # self.milvus_api: MilvusAPI = MilvusAPI()
+        #
+        # # 测试embedding工具
+        # logger.info("初始化embedding工具...")
+        # self.embedding_tool: EmbeddingTool = EmbeddingTool()
 
         # 事件处理专用线程池：与 OSS 图片上传池隔离，避免“事件处理任务内部又向同一池提交图片上传”造成的嵌套死锁。
         # 解析偏 CPU、embedding/Milvus 偏 I/O，默认取 CPU 核数；可用 MINIO_PROCESS_MAX_WORKERS 覆盖。
@@ -129,77 +133,29 @@ class MinioEventHandler:
             doc_path_name = object_name
 
             # 如果是排查补漏模式，先检查是否已经存在
-            if not force_update:
-                if self.milvus_api.check_document_exists(doc_path_name):
-                    logger.info(f"文档已经存在，跳过：{object_name}")
-                    return True
+            # if not force_update:
+            #     if self.milvus_api.check_document_exists(doc_path_name):
+            #         logger.info(f"文档已经存在，跳过：{object_name}")
+            #         return True
 
             logger.info(f"处理文档：{object_name}")
 
             # 解析对象内容
-            parser_result = self.parser.parse_object(bucket_name, object_name)
+            documents: List[Document] = self.parser.parse_object(bucket_name, object_name)
 
-            if not parser_result:
-                logger.error(f"解析文档失败:{bucket_name}/{object_name}")
+            if not documents:
+                logger.error(f"文档解析返回结果为空:{bucket_name}/{object_name}")
                 return False
 
-            if 'error' in parser_result:
-                logger.error(f"文档内容解析失败:{parser_result['error']}")
-                return False
+            # 摄取文档
+            self.ingestion.ingest_documents(documents)
 
-            if not parser_result['contents']:
-                logger.error(f"未提取到文本内容,跳过...")
-                return True
+            logger.info(f"文档{bucket_name}/{object_name}处理完成")
 
-            logger.info(f"文档解析成功，获得{len(parser_result['contents'])}个文本片段")
-
-            # 如果是强制更新，先删除已存在的记录
-            if force_update:
-                self.milvus_api.delete_existing_document(doc_path_name)
-
-            # 为每个文本片段生成embedding，收集后批量存储到Milvus
-            doc_data_list = []
-            for i, content in enumerate(parser_result['contents']):
-                try:
-                    # 生成embedding向量
-                    embedding_vector = self.embedding_tool.get_embedding(content)
-                    if not embedding_vector:
-                        logger.error(f"文档{bucket_name}/{object_name}片段{i + 1}embedding生成失败,跳过")
-                        continue
-
-                    # 准备文档数据
-                    doc_data = MilvusDocument(
-                        doc_name=parser_result['doc_name'],
-                        doc_path_name=parser_result['doc_path_name'],
-                        doc_type=parser_result['doc_type'],
-                        doc_md5=parser_result['doc_md5'],
-                        doc_length=parser_result['doc_length'],
-                        content=content,
-                        content_vector=embedding_vector,
-                        embedding_model=self.embedding_tool.model
-                    )
-                    doc_data_list.append(doc_data)
-
-                except Exception as e:
-                    logger.error(f"处理文档{bucket_name}/{object_name}片段{i + 1}异常：{e}")
-                    continue
-
-            # 批量存储到Milvus(允许重复，因为我们已经处理了去重逻辑)
-            success_count = self.milvus_api.insert_documents(doc_data_list)
-
-            if success_count < len(doc_data_list):
-                logger.error(
-                    f"保存文档{bucket_name}/{object_name}向量部分失败，"
-                    f"成功{success_count}/{len(doc_data_list)}个片段"
-                )
-
-            logger.info(f"文档{bucket_name}/{object_name}处理完成，成功存储{success_count}/{len(parser_result['contents'])}个片段")
-
-            return success_count > 0
-
-        except Exception as e:
-            logger.error(f"处理对象失败,objectName:{object_name},{e}")
+        except Exception:
+            logger.exception(f"处理对象失败,objectName:{bucket_name}/{object_name}")
             return False
+
 
     def _handler_object_deleted(self, event_info: Dict[str, Any]):
         """
@@ -210,9 +166,9 @@ class MinioEventHandler:
         try:
             bucket_name = event_info['bucket_name']
             object_name = event_info['object_name']
-            doc_path_name = object_name   # 不再包含bucket_name前缀
+            doc_path_name = f"{bucket_name}/{object_name}"
 
-            logger.info(f"\n=== 处理删除对象: {bucket_name}/{object_name} ===")
+            logger.info(f"\n=== 处理删除对象: {doc_path_name} ===")
 
             # 从Milvus中删除相关记录
             logger.info("从Milvus中查找并删除相关记录...")

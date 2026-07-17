@@ -47,10 +47,13 @@ class Config:
 
     # soffice doc文件转pdf文档工具路径
     SOFFICE_PATH: str = os.getenv("SOFFICE_PATH")
+    USE_MINREU: bool = os.getenv("USE_MINREU", 'false') == 'true'
+    USE_PYMUPDF4LLM: bool = os.getenv("USE_PYMUPDF4LLM", 'false') == 'true'
+    USE_LIBRE_OFFICE: bool = os.getenv("USE_LIBRE_OFFICE", 'false') == 'true'
 
     # 文档分块
-    CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "800"))
-    OVERLAP_SIZE: int = int(os.getenv("OVERLAP_SIZE", "200"))
+    CHUNK_SIZE: int = int(os.getenv("CHUNK_SIZE", "512"))
+    OVERLAP_SIZE: int = int(os.getenv("OVERLAP_SIZE", "128"))
     TITLE_EXTRACTOR_NODES: int = int(os.getenv("TITLE_EXTRACTOR_NODES"))
 
     # redis

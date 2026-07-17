@@ -23,7 +23,7 @@ class MilvusDocument:
 class MilvusDocumentField(str, Enum):
     ID = "id"             # 主键ID
     DOC_NAME = "doc_name" # 文档名称
-    DOC_PATH_NAME = "doc_path_name" # 文档路径（含名字）
+    DOC_PATH_NAME = "file_path" # 文档路径（含名字）
     DOC_TYPE = "doc_type" # 文档类型
     DOC_MD5 = "doc_md5"   # 文档MD5
     DOC_LENGTH = "doc_length" # 文档字节数
@@ -42,22 +42,22 @@ class MilvusDocumentField(str, Enum):
 #      非 nullable 字段会导致插入时报 "Insert missed an field" 错误。
 # 若后续需要按这些字段做高效过滤/索引，请在节点 metadata 中填充对应 key，
 # 再在此处声明 scalar_field_names / scalar_field_types 即可。
-# SCALAR_FIELD_NAMES = [
-#     MilvusDocumentField.DOC_NAME.value,
-#     MilvusDocumentField.DOC_PATH_NAME.value,
-#     MilvusDocumentField.DOC_TYPE.value,
-#     MilvusDocumentField.DOC_MD5.value,
-#     MilvusDocumentField.DOC_LENGTH.value,
-#     MilvusDocumentField.EMBEDDING_MODEL.value,
-# ]
-# SCALAR_FIELD_TYPES = [
-#     DataType.VARCHAR,   # doc_name
-#     DataType.VARCHAR,   # doc_path_name
-#     DataType.VARCHAR,   # doc_type
-#     DataType.VARCHAR,   # doc_md5
-#     DataType.INT64,     # doc_length
-#     DataType.VARCHAR,   # embedding_model
-# ]
+SCALAR_FIELD_NAMES = [
+    # MilvusDocumentField.DOC_NAME.value,
+    MilvusDocumentField.DOC_PATH_NAME.value,
+    # MilvusDocumentField.DOC_TYPE.value,
+    # MilvusDocumentField.DOC_MD5.value,
+    # MilvusDocumentField.DOC_LENGTH.value,
+    # MilvusDocumentField.EMBEDDING_MODEL.value,
+]
+SCALAR_FIELD_TYPES = [
+    # DataType.VARCHAR,   # doc_name
+    DataType.VARCHAR,   # doc_path_name
+    # DataType.VARCHAR,   # doc_type
+    # DataType.VARCHAR,   # doc_md5
+    # DataType.INT64,     # doc_length
+    # DataType.VARCHAR,   # embedding_model
+]
 
 def build_bm25_function() -> BM25BuiltInFunction:
     """BM25 内置函数：服务端自动对 content 分词，生成稀疏向量到 content_sparse。"""

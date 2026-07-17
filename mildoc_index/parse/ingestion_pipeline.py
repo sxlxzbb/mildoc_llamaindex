@@ -120,15 +120,18 @@ class DocumentIngestionPipeline:
     def _create_pipelines(self):
         """创建不同类型的摄取管道"""
         # 通用配置
+        ingestion_cache = IngestionCache(
+            cache=RedisCache.from_host_and_port(Config.REDIS_HOST, Config.REDIS_PORT),
+            collection=Config.REDIS_CACHE,
+        )
         common_config = {
             "vector_store": self.milvus_vector_store,
             "docstore": self.redis_document_store,
-            "cache": IngestionCache(
-                cache=RedisCache.from_host_and_port(Config.REDIS_HOST,Config.REDIS_PORT),
-                collection=Config.REDIS_CACHE,
-            ),
+            "cache": ingestion_cache,
             "docstore_strategy": DocstoreStrategy.UPSERTS_AND_DELETE
         }
+        # 单独持有 cache 引用，供删除文档时清理 ingestion cache 使用
+        self.ingestion_cache = ingestion_cache
 
         # 1. 普通文本文件的管道 (使用 SentenceSplitter)
         self.text_pipeline = IngestionPipeline(
@@ -191,22 +194,22 @@ class DocumentIngestionPipeline:
                 return "error", "入参文档为空"
 
             file_name = doc.metadata.get("file_name")
-            content_type = doc.metadata.get("content_type")
-            if not content_type and file_name:
-                content_type = os.path.splitext(os.path.basename(file_name))[1]
+            file_type = doc.metadata.get("file_type")
+            if not file_type and file_name:
+                file_type = os.path.splitext(os.path.basename(file_name))[1]
 
-            if not content_type:
+            if not file_type:
                 logger.info(f"无法确定文件类型,file_name:{file_name}")
                 return "error", "未知的文件类型"
 
             logger.info(f"开始处理文档:{file_name}")
 
             pipeline_nodes = []
-            if content_type in ('.markdown', '.md'):
+            if file_type in ('.markdown', '.md'):
                 pipeline_nodes = self.markdown_pipeline.run(documents=[doc], show_progress=True)
                 logger.info(f"文件[{file_name}]处理完成,生成了 {len(pipeline_nodes)} 个节点")
 
-            if content_type in ('.text', '.txt'):
+            if file_type in ('.text', '.txt'):
                 pipeline_nodes = self.text_pipeline.run(documents=[doc], show_progress=True)
                 logger.info(f"文件[{file_name}]处理完成,生成了 {len(pipeline_nodes)} 个节点")
 
@@ -247,6 +250,37 @@ class DocumentIngestionPipeline:
         logger.info(f"文档摄取完成，成功文档：{success_docs}, 失败文档：{fail_docs}")
 
         return success_docs, fail_docs
+
+
+    def delete_document(self, doc_path_name: str) -> None:
+        """
+        删除指定文档在向量库、docstore、index_store、ingestion cache 中的全部数据。
+        doc_id 使用确定性的 doc_path_name（与摄取时保持一致），因此可直接据此删除。
+        :param doc_path_name: 文档在 minio 的路径（bucket/object），即 doc_id
+        """
+        doc_id = doc_path_name
+
+        # 1. 删除 Milvus 向量数据（按 doc_id 过滤删除，不依赖 docstore 状态，最可靠）
+        try:
+            self.milvus_vector_store.delete(doc_id)
+            logger.info(f"已从 Milvus 删除向量数据：{doc_path_name}")
+        except Exception:
+            logger.exception(f"从 Milvus 删除向量数据失败：{doc_path_name}")
+
+        # 2. 删除 docstore + index_store 中的文档引用信息
+        try:
+            self.storage_context.delete_ref_doc(doc_id, delete_from_vector_store=False)
+            logger.info(f"已从 docstore/index_store 删除文档引用：{doc_path_name}")
+        except Exception:
+            logger.exception(f"从 docstore/index_store 删除失败：{doc_path_name}")
+
+        # 3. 单独清理 ingestion cache（delete_ref_doc 不会清理 cache，
+        #    不清理会导致同名文件重传时命中旧缓存而不重新解析）
+        try:
+            self.ingestion_cache.delete(doc_id)
+            logger.info(f"已清理 ingestion cache：{doc_path_name}")
+        except Exception:
+            logger.exception(f"清理 ingestion cache 失败：{doc_path_name}")
 
 
 

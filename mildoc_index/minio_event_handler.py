@@ -170,14 +170,10 @@ class MinioEventHandler:
 
             logger.info(f"\n=== 处理删除对象: {doc_path_name} ===")
 
-            # 从Milvus中删除相关记录
-            logger.info("从Milvus中查找并删除相关记录...")
+            # 删除向量库、docstore、index_store、ingestion cache 中的对应数据
+            self.ingestion.delete_document(doc_path_name)
 
-            # 使用MilvsAPI的删除方法
-            if self.milvus_api.delete_existing_document(doc_path_name):
-                logger.info(f"文档删除成功：{doc_path_name}")
-            else:
-                logger.error(f"文档删除失败：{doc_path_name}")
+            logger.info(f"文档删除处理完成：{doc_path_name}")
         except Exception as e:
             logger.error(f"处理对象删除事件异常：{e}")
 

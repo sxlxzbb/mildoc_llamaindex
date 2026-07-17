@@ -17,7 +17,10 @@ class MarkdownParser(BaseParser):
 
         docs = MarkdownReader().load_data(file=markdown_path)
 
-        docs[0].metadata['file_path'] = doc_path_name
+        doc = docs[0]
+        # 使用确定性的 doc_id（= minio 路径），与删除时保持一致，便于按路径删除
+        doc.id_ = doc_path_name
+        doc.metadata['file_path'] = doc_path_name
 
         return docs
 

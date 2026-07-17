@@ -17,9 +17,6 @@ def main():
         # 全量刷新模式
         python main.py --provider minio --mode full-refresh
         
-        # 排查补漏模式
-        python main.py --provider minio --mode backfill
-        
         # 增量更新模式(实时监听)
         python main.py --provider minio --mode listen
         
@@ -52,6 +49,7 @@ def main():
     try:
         # 创建监听器实例
         if args.provider == "oss":
+            logger.info(f"咱不支持OSS")
             pass
         else:
             from minio_event_handler import MinioEventHandler
@@ -65,10 +63,6 @@ def main():
             logger.info("执行全量刷新模式。。。")
             listener.full_update()
 
-        elif args.mode == BACKFILL:
-            logger.info("执行排查补漏模式。。。")
-            listener.backfill_update()
-
         elif args.mode == LISTEN:
             logger.info("执行增量更新模式（实时监听）。。。")
             logger.info("提示：使用Ctrl + C停止监听，或使用nohup在后台运行")
@@ -79,9 +73,6 @@ def main():
             使用示例:
             # 全量刷新模式
             python main.py --provider minio --mode full-refresh
-              
-            # 排查补漏模式
-            python main.py --provider minio --mode backfill
               
             # 增量更新模式（实时监听）
             python main.py --provider minio --mode listen

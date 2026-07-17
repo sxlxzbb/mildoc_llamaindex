@@ -298,6 +298,16 @@ class DocumentIngestionPipeline:
         """
         doc_id = doc_path_name
 
+        # 0. 删除前确保 Milvus 集合已加载到内存：Milvus 的 delete 要求集合 loaded，
+        #    否则会报错；尤其服务刚启动、尚未处理过任何新增事件时集合可能未 load。
+        #    重复 load 是幂等的，已 load 时不会报错。
+        try:
+            self.milvus_vector_store.client.load_collection(
+                self.milvus_vector_store.collection_name
+            )
+        except Exception:
+            logger.exception(f"加载 Milvus 集合失败（删除前）：{doc_path_name}")
+
         # 1. 删除 Milvus 向量数据（按 doc_id 过滤删除，不依赖 docstore 状态，最可靠）
         try:
             self.milvus_vector_store.delete(doc_id)

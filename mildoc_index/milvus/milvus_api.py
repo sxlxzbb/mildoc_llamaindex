@@ -2,7 +2,6 @@ from pymilvus import MilvusClient
 
 from config.config import Config
 from logger.logging import setup_logging
-from milvus import milvus_config
 
 logger = setup_logging()
 
@@ -52,3 +51,14 @@ class MilvusApi:
             return len(results) > 0
         except Exception as e:
             logger.exception(f"检查文档是否存在失败:{doc_path_name}")
+
+
+    def flush_collection(self) -> bool:
+        """刷新集合"""
+        try:
+            self.client.flush(collection_name=self.collection_name)
+            logger.info(f"集合 '{self.collection_name}' 刷新成功")
+            return True
+        except Exception as e:
+            logger.exception(f"刷新集合失败,{self.collection_name}")
+            return False

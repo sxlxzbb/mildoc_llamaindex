@@ -11,6 +11,7 @@ from minio import Minio
 
 from config.config import Config
 from logger.logging import setup_logging
+from milvus.milvus_api import MilvusApi
 from parse.ingestion_pipeline import DocumentIngestionPipeline
 from parse.simple_object_parser import SimpleObjectParser
 
@@ -63,12 +64,8 @@ class MinioEventHandler:
         self.ingestion = DocumentIngestionPipeline()
 
         # 初始化Milvus
-        # logger.info("初始化Milvus...")
-        # self.milvus_api: MilvusAPI = MilvusAPI()
-        #
-        # # 测试embedding工具
-        # logger.info("初始化embedding工具...")
-        # self.embedding_tool: EmbeddingTool = EmbeddingTool()
+        logger.info("初始化Milvus...")
+        self.milvus_api: MilvusApi = MilvusApi()
 
         # 事件处理专用线程池：与 OSS 图片上传池隔离，避免“事件处理任务内部又向同一池提交图片上传”造成的嵌套死锁。
         # 解析偏 CPU、embedding/Milvus 偏 I/O，默认取 CPU 核数；可用 MINIO_PROCESS_MAX_WORKERS 覆盖。
@@ -116,21 +113,20 @@ class MinioEventHandler:
                 logger.info(f"创建的是目录不处理：{bucket_name}/{object_name}")
                 return
 
-            self._process_single_object(bucket_name, object_name, force_update=True)
+            self._process_single_object(bucket_name, object_name)
         except Exception as e:
             logger.error(f"处理对象创建事件异常：{e}")
 
 
-    def _process_single_object(self, bucket_name, object_name, force_update):
+    def _process_single_object(self, bucket_name, object_name):
         """
         处理单个对象（用户全量刷新和排查补漏）
         :param bucket_name: 桶名称
         :param object_name: 对象名称
-        :param force_update: 是否强制更新（True=全量刷新，False=排查补漏）
         :return: 返回bool,处理是否成功
         """
         try:
-            doc_path_name = object_name
+            # doc_path_name = object_name
 
             # 如果是排查补漏模式，先检查是否已经存在
             # if not force_update:
@@ -151,6 +147,8 @@ class MinioEventHandler:
             self.ingestion.ingest_documents(documents)
 
             logger.info(f"文档{bucket_name}/{object_name}处理完成")
+
+            return True
 
         except Exception:
             logger.exception(f"处理对象失败,objectName:{bucket_name}/{object_name}")
@@ -268,7 +266,7 @@ class MinioEventHandler:
 
                 logger.info(f"全量刷新，开始处理对象:{object_name}")
 
-                if self._process_single_object(self.bucket_name, object_name, force_update=True):
+                if self._process_single_object(self.bucket_name, object_name):
                     processed_objects += 1
 
             self.milvus_api.flush_collection()
@@ -281,55 +279,10 @@ class MinioEventHandler:
             logger.error(f"全量刷新文档异常:{e}")
 
 
-    def backfill_update(self):
-        """
-        模式2：排查补漏 - 检查Milvus中不存在的文档并新增
-        :return:
-        """
-        logger.info(f"=== 模式2：排查补漏 ===")
-        logger.info(f"正在检查桶 '{self.bucket_name}' 中缺失的文档...")
-        try:
-            # 获取桶中所有对象
-            objects = self.minio_client.list_objects(self.bucket_name, recursive=True)
-
-            total_objects = 0
-            new_objects = 0
-            existing_objects = 0
-
-            for obj in objects:
-                object_name = obj.object_name
-
-                # 跳过文件夹
-                if object_name.endswith('/'):
-                    continue
-
-                total_objects += 1
-
-                logger.info(f"排查补漏，开始处理对象:{object_name}")
-
-                # 检查milvus是否已经存在
-                if self.milvus_api.check_document_exists(object_name):
-                    logger.info(f"{object_name} 已经存在,跳过")
-                    existing_objects += 1
-                else:
-                    logger.info(f"{object_name} 不存在，开始处理...")
-                    if self._process_single_object(self.bucket_name, object_name, force_update=True):
-                        new_objects += 1
-
-            self.milvus_api.flush_collection()
-
-            logger.info(f"=== 排查补漏完成 ===")
-            logger.info(f"排查补漏总,对象数:{total_objects}")
-            logger.info(f"排查补漏,已存在:{existing_objects}")
-            logger.info(f"排查补漏,新增:{new_objects}")
-            logger.info(f"排查补漏,失败:{total_objects - existing_objects - new_objects}")
-        except Exception as e:
-            logger.error(f"排查补漏异常:{self.bucket_name}, {e}")
-
 
     def start_listening(self):
         """
-        模式3：增量更新 - 根据消息通知进行增量更新
+        模式2：增量更新 - 根据消息通知进行增量更新
         """
         logger.info(f"=== 模式3：增量更新 ===")
         logger.info(f"开始监听桶 '{self.bucket_name}' 的事件...")

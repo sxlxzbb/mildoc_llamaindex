@@ -297,8 +297,9 @@ def api_file_detail(file_path):
 
         # 从 Milvus 查询文件索引信息
         try:
+            file_path = f"{MINIO_BUCKET}/{file_path}"
             milvus_client.load_collection(collection_name=MILVUS_COLLECTION)
-            filter_expr = f'doc_path_name == "{file_path}"'
+            filter_expr = f'file_path == "{file_path}"'
 
             results = milvus_client.query(
                 collection_name=MILVUS_COLLECTION,
@@ -323,7 +324,7 @@ def api_file_detail(file_path):
                         'length': len(result.get('content', ''))
                     })
         except Exception as e:
-            print(f"查询 Milvus 失败: {e}")
+            app.logger.error(f"查询 Milvus 失败: {e}")
 
         return jsonify(file_info)
     except Exception as e:
@@ -425,31 +426,31 @@ def api_delete_file(file_path):
             app.logger.info(f"minio文件删除成功: {file_path}")
 
             # 如果文件在 Milvus 中有索引，也删除索引记录
-            try:
-                milvus_client.load_collection(collection_name=MILVUS_COLLECTION)
-                filter_expr = f'doc_path_name == "{file_path}"'
-
-                # 查询是否存在索引记录
-                results = milvus_client.query(
-                    collection_name=MILVUS_COLLECTION,
-                    filter=filter_expr,
-                    output_fields=["id"],
-                    limit=1000
-                )
-
-                app.logger.info(f"已查到文件：{results}")
-
-                if results:
-                    # 删除 Milvus 中的记录
-                    ids_to_delete = [result['id'] for result in results]
-                    milvus_client.delete(
-                        collection_name=MILVUS_COLLECTION,
-                        filter=f'id in {ids_to_delete}'
-                    )
-                    app.logger.info(f"已删除 Milvus 中的 {len(ids_to_delete)} 条记录")
-
-            except Exception as e:
-                app.logger.warning(f"删除 Milvus 索引时出错 (文件已删除): {str(e)}")
+            # try:
+            #     milvus_client.load_collection(collection_name=MILVUS_COLLECTION)
+            #     filter_expr = f'file_path == "{file_path}"'
+            #
+            #     # 查询是否存在索引记录
+            #     results = milvus_client.query(
+            #         collection_name=MILVUS_COLLECTION,
+            #         filter=filter_expr,
+            #         output_fields=["id"],
+            #         limit=1000
+            #     )
+            #
+            #     app.logger.info(f"已查到文件：{results}")
+            #
+            #     if results:
+            #         # 删除 Milvus 中的记录
+            #         ids_to_delete = [result['id'] for result in results]
+            #         milvus_client.delete(
+            #             collection_name=MILVUS_COLLECTION,
+            #             filter=f'id in {ids_to_delete}'
+            #         )
+            #         app.logger.info(f"已删除 Milvus 中的 {len(ids_to_delete)} 条记录")
+            #
+            # except Exception as e:
+            #     app.logger.warning(f"删除 Milvus 索引时出错 (文件已删除): {str(e)}")
 
             return jsonify({
                 'success': True,

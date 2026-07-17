@@ -245,7 +245,7 @@ class MinioEventHandler:
 
     def full_update(self):
         """
-        模式1：全量刷新 - 遍历Minion桶中的所有数据并更新到Milvus
+        模式1：全量刷新 - 遍历Minion桶中的所有数据并更新到Milvus（并行处理）
         :return:
         """
         logger.info(f"=== 模式1：全量刷新 ===")
@@ -255,7 +255,7 @@ class MinioEventHandler:
             objects = self.minio_client.list_objects(self.bucket_name, recursive=True)
 
             total_objects = 0
-            processed_objects = 0
+            futures = []
 
             for obj in objects:
                 object_name = obj.object_name
@@ -264,11 +264,23 @@ class MinioEventHandler:
                     continue
                 total_objects += 1
 
-                logger.info(f"全量刷新，开始处理对象:{object_name}")
+                logger.info(f"全量刷新，提交处理对象:{object_name}")
+                # 提交到线程池并行处理（与实时监听共用 _executor，两种模式不会同时启动）
+                future = self._executor.submit(
+                    self._process_single_object, self.bucket_name, object_name
+                )
+                futures.append(future)
 
-                if self._process_single_object(self.bucket_name, object_name):
-                    processed_objects += 1
+            # 等待所有对象处理完成，并统计成功数
+            processed_objects = 0
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    if future.result():
+                        processed_objects += 1
+                except Exception as e:
+                    logger.error(f"全量刷新任务异常:{e}")
 
+            # 全部处理完成后，统一刷新集合（触发 seal + 建索引）
             self.milvus_api.flush_collection()
 
             logger.info("=== 全量刷新完成 ===")

@@ -24,6 +24,8 @@ class MarkdownParser(BaseParser):
         doc.metadata['file_path'] = doc_path_name
         doc.metadata['file_type'] = FileType.MARKDOWN
 
+        doc.metadata['doc_md5'] = self._calc_md5(doc.text)
+
         return docs
 
 

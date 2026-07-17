@@ -204,6 +204,10 @@ class DocumentIngestionPipeline:
 
             logger.info(f"开始处理文档:{file_name}")
 
+            # 内容 hash 缓存失效：若文档内容较上次有变化，先清除该 doc 的 ingestion cache，
+            # 强制重新切分/向量化，避免 IngestionCache 返回旧节点（同路径覆盖上传场景）
+            self._bust_cache_if_content_changed(doc)
+
             if file_type in ('.markdown', '.md'):
                 pipeline_nodes = self.markdown_pipeline.run(documents=[doc], show_progress=True)
                 logger.info(f"文件[{file_name}]处理完成,生成了 {len(pipeline_nodes)} 个节点")
@@ -249,6 +253,41 @@ class DocumentIngestionPipeline:
         logger.info(f"文档摄取完成，成功文档：{success_docs}, 失败文档：{fail_docs}")
 
         return success_docs, fail_docs
+
+
+    def _bust_cache_if_content_changed(self, doc: Document) -> None:
+        """
+        内容 hash 缓存失效：对比本次文档与 docstore 中已存文档的 doc_md5，
+        若内容变化（或旧数据无 doc_md5）则清除该 doc_id 的 ingestion cache，
+        使后续 pipeline.run 重新切分/向量化，避免缓存返回旧节点。
+        """
+        doc_id = doc.doc_id
+        curr_md5 = doc.metadata.get("doc_md5")
+        if not curr_md5:
+            return
+
+        # 读取 docstore 中已存在的同 doc_id 文档
+        prev_doc = None
+        try:
+            prev_doc = self.redis_document_store.get_document(doc_id)
+        except KeyError:
+            # 文档不存在（首次摄取），cache 本就是空的，无需清除
+            prev_doc = None
+        except Exception:
+            logger.exception(f"读取 docstore 旧文档失败，跳过缓存失效判断：{doc_id}")
+            prev_doc = None
+
+        if prev_doc is None:
+            return
+
+        prev_md5 = prev_doc.metadata.get("doc_md5") if getattr(prev_doc, "metadata", None) else None
+        # 内容变化 或 旧数据无 doc_md5：清除缓存强制重算
+        if prev_md5 != curr_md5:
+            try:
+                self.ingestion_cache.delete(doc_id)
+                logger.info(f"文档内容已变化，已清除 ingestion cache 强制重新向量化：{doc_id}")
+            except Exception:
+                logger.exception(f"清除 ingestion cache 失败：{doc_id}")
 
 
     def delete_document(self, doc_path_name: str) -> None:

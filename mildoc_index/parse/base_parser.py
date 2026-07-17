@@ -1,4 +1,5 @@
 import os
+import hashlib
 from typing import List
 
 from llama_index.core import Document, SimpleDirectoryReader
@@ -8,6 +9,11 @@ from logger.logging import setup_logging
 logger = setup_logging()
 
 class BaseParser:
+
+    @staticmethod
+    def _calc_md5(text: str) -> str:
+        """计算文本内容的 MD5，用于缓存失效判断（内容变化则重新向量化）。"""
+        return hashlib.md5((text or "").encode("utf-8", errors="ignore")).hexdigest()
 
     def default_parse(self, file_path: str, doc_path_name: str) -> List[Document] | None:
 
@@ -21,6 +27,8 @@ class BaseParser:
         # 使用确定性的 doc_id（= minio 路径），与删除时保持一致，便于按路径删除
         doc.id_ = doc_path_name
         doc.metadata['file_path'] = doc_path_name
+        # 内容 hash，供摄取时判断是否需要清除 ingestion cache（同路径覆盖上传场景）
+        doc.metadata['doc_md5'] = self._calc_md5(doc.text)
 
         return docs
 

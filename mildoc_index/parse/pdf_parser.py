@@ -73,7 +73,6 @@ class PdfParser(BaseParser):
                 metadata={
                     'creation_date': date.today().strftime("%Y-%m-%d"),
                     "file_name": pdf_name,
-                    # "doc_id": doc_path_name,
                     "file_path": doc_path_name,
                     "file_type": FileType.MARKDOWN  # 标记类型，方便后续处理
                 }
@@ -89,36 +88,16 @@ class PdfParser(BaseParser):
             if not new_content:
                 logger.info(f"PdfParser.parse替换Markdown文件中的图片返回结果为空:{pdf_name}")
                 if not content:
+                    doc.metadata['doc_md5'] = self._calc_md5(doc.text)
                     return [doc]
-                    # return [Document(
-                    #     id_=doc_path_name,
-                    #     text=content,
-                    #     metadata={
-                    #         "file_name": pdf_name,
-                    #         "doc_id": doc_path_name,
-                    #         "file_path": doc_path_name,
-                    #         "content_type": content_type  # 标记类型，方便后续处理
-                    #     }
-                    # )]
                 else:
                     logger.info(f"PdfParser.parse替换markdown中图片使得原来的content内容也为空了:{pdf_name}")
                     return None
 
             doc.set_content(new_content)
+            doc.metadata['doc_md5'] = self._calc_md5(doc.text)
 
             return [doc]
-
-            # return [Document(
-            #     id_=doc_path_name,
-            #     text=new_content,
-            #     metadata={
-            #         "file_name": pdf_name,
-            #         "doc_id": doc_path_name,
-            #         "file_path": doc_path_name,
-            #         "content_type": content_type  # 标记类型，方便后续处理
-            #     }
-            # )]
-
         except Exception:
             logger.exception("PdfParser.parse发生异常")
 

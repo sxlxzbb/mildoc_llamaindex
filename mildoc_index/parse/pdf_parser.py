@@ -37,10 +37,12 @@ class PdfParser(BaseParser):
             self.pdf_processor = Pymupdf4llmProcessor()
 
 
-    def parse(self, pdf_path: str, doc_path_name: str) -> List[Document] | None:
+    def parse(self, pdf_path: str, doc_path_name: str, file_size: int = 0) -> List[Document] | None:
         """
         将pdf文件转为markdown文件
         :param pdf_path:
+        :param doc_path_name:
+        :param file_size:
         :return:
         """
         if not os.path.exists(pdf_path):
@@ -74,7 +76,8 @@ class PdfParser(BaseParser):
                     'creation_date': date.today().strftime("%Y-%m-%d"),
                     "file_name": pdf_name,
                     "file_path": doc_path_name,
-                    "file_type": FileType.MARKDOWN  # 标记类型，方便后续处理
+                    "file_type": FileType.MARKDOWN,  # 标记类型，方便后续处理
+                    "file_size": file_size
                 }
             )
 

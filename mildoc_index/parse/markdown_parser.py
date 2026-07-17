@@ -11,7 +11,7 @@ logger = setup_logging()
 
 class MarkdownParser(BaseParser):
 
-    def parse(self, markdown_path: str, doc_path_name: str) -> list[Document] | None:
+    def parse(self, markdown_path: str, doc_path_name: str, file_size: int = 0) -> list[Document] | None:
         if not os.path.exists(markdown_path):
             logger.info(f"MarkdownParser.parse文件不存在:{markdown_path}")
             return None

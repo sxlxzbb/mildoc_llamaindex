@@ -19,10 +19,12 @@ class OfficeParser(BaseParser):
         self.libre_office = LibreOffice()
 
 
-    def parse(self, file_path: str, doc_path_name: str) -> List[Document] | None:
+    def parse(self, file_path: str, doc_path_name: str, file_size: int = 0) -> List[Document] | None:
         """
         先将office文档转为pdf，然后再走pdf的解析流程
         :param file_path:
+        :param doc_path_name:
+        :param file_size:
         :return:
         """
         if not os.path.exists(file_path):
@@ -39,7 +41,7 @@ class OfficeParser(BaseParser):
                 # 使用默认解析器
                 return self.default_parse(file_path, doc_path_name)
 
-            pdf_parse_result = self.pdf_parser.parse(pdf_file_path, doc_path_name)
+            pdf_parse_result = self.pdf_parser.parse(pdf_file_path, doc_path_name, file_size)
             if not pdf_parse_result:
                 logger.info(f"OfficeParser.parse调pdf解析器解析返回结果为空,pdf_file_path:{pdf_file_path}")
                 # 使用默认解析器

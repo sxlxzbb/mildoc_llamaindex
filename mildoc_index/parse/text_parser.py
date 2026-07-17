@@ -9,7 +9,7 @@ logger = setup_logging()
 
 class TextParser(BaseParser):
 
-    def parse(self, file_path: str, doc_path_name: str) -> List[Document] | None:
+    def parse(self, file_path: str, doc_path_name: str, file_size: int = 0) -> List[Document] | None:
         if not os.path.exists(file_path):
             logger.info(f"TextParser.parse文件不存在:{file_path}")
             return None

@@ -45,7 +45,7 @@ def _get_minio_client() -> Minio:
 
 class MinioEventHandler:
     """MinIO事件监听器"""
-    def __init__(self, bucket_name: str = None):
+    def __init__(self):
         """
         初始化监听器
         Args:
@@ -341,5 +341,12 @@ class MinioEventHandler:
             # 无论正常退出、Ctrl+C 还是异常，都关闭线程池并等待在途任务完成
             self._shutdown_executor()
 
+
+if __name__ == '__main__':
+    bucket_name = Config.MINIO_BUCKET
+    object_name = '公司文档/汇视威人事管理流程.docx'
+
+    handler = MinioEventHandler()
+    handler._process_single_object(bucket_name, object_name)
 
 

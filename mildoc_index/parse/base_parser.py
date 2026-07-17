@@ -33,7 +33,7 @@ class BaseParser:
         return docs
 
 
-    def parse(self, file_path: str, doc_path_name: str) -> List[Document] | None:
+    def parse(self, file_path: str, doc_path_name: str, file_size: int = 0) -> List[Document] | None:
         """
         解析文档
         :param file_path:

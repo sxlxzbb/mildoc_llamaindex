@@ -151,7 +151,7 @@ class SimpleObjectParser:
             logger.info(f"使用解析器:{parser.__class__.__name__}解析{object_name}")
 
             doc_path_name = f"{bucket_name}/{object_name}"
-            documents = parser.parse(file_path, doc_path_name)
+            documents = parser.parse(file_path, doc_path_name, file_size)
             if not documents:
                 logger.info(f"文件解析结果为空:{bucket_name}/{object_name}")
                 return []

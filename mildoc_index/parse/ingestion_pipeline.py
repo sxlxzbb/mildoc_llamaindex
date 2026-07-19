@@ -69,6 +69,7 @@ class DocumentIngestionPipeline:
             dimensions=Config.MILVUS_VECTOR_DIM,    # 768，透传给 API，确保与 Milvus 维度一致
             api_key=Config.OPENAI_API_KEY,
             api_base=Config.OPENAI_BASE_URL,
+            embed_batch_size=10,  #限制每批嵌入数量，避免超过接口上限
         )
 
 
@@ -191,7 +192,7 @@ class DocumentIngestionPipeline:
         try:
             if not doc:
                 logger.info(f"文档摄取，入参文档为空")
-                return "error", "入参文档为空"
+                return "error", "入参文档为空", None
 
             file_name = doc.metadata.get("file_name")
             file_type = doc.metadata.get("file_type")
@@ -200,7 +201,7 @@ class DocumentIngestionPipeline:
 
             if not file_type:
                 logger.info(f"无法确定文件类型,file_name:{file_name}")
-                return "error", "未知的文件类型"
+                return "error", "未知的文件类型", None
 
             logger.info(f"开始处理文档:{file_name}")
 

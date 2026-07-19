@@ -22,7 +22,7 @@ class MarkdownParser(BaseParser):
         # 使用确定性的 doc_id（= minio 路径），与删除时保持一致，便于按路径删除
         doc.id_ = doc_path_name
         doc.metadata['file_path'] = doc_path_name
-        doc.metadata['file_type'] = FileType.MARKDOWN
+        doc.metadata['file_type'] = FileType.MARKDOWN.value
 
         doc.metadata['doc_md5'] = self._calc_md5(doc.text)
 

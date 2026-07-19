@@ -304,7 +304,8 @@ def api_file_detail(file_path):
             results = milvus_client.query(
                 collection_name=MILVUS_COLLECTION,
                 filter=filter_expr,
-                output_fields=["doc_name", "doc_path_name", "doc_type", "doc_md5", "doc_length", "content", "embedding_model"],
+                # output_fields=["doc_name", "doc_path_name", "doc_type", "doc_md5", "doc_length", "content", "embedding_model"],
+                output_fields=["id", "doc_id", "text", "file_path", "doc_md5", 'file_type', 'file_size'],
                 limit=100
             )
 
@@ -312,7 +313,7 @@ def api_file_detail(file_path):
                 file_info['indexed'] = True
                 # 取第一条记录的基本信息
                 first_record = results[0]
-                file_info['doc_type'] = first_record.get('doc_type', '')
+                file_info['doc_type'] = first_record.get('file_type', '')
                 file_info['indexed_md5'] = first_record.get('doc_md5', '')
                 file_info['doc_length'] = first_record.get('doc_length', 0)
                 file_info['embedding_model'] = first_record.get('embedding_model', '')
@@ -320,8 +321,8 @@ def api_file_detail(file_path):
                 # 处理所有分片
                 for result in results:
                     file_info['chunks'].append({
-                        'content': result.get('content', ''),
-                        'length': len(result.get('content', ''))
+                        'content': result.get('text', ''),
+                        'length': len(result.get('text', ''))
                     })
         except Exception as e:
             app.logger.error(f"查询 Milvus 失败: {e}")

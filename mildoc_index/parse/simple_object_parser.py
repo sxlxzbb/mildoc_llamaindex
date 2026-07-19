@@ -124,7 +124,7 @@ class SimpleObjectParser:
             headers = response.headers
 
             logger.info(f"对象大小:{len(data)}字节")
-            # doc_name = os.path.basename(object_name)
+            doc_name = os.path.basename(object_name)
             # doc_path_name = object_name
             content_type = headers.get('Content-Type', '')
             # doc_type = self._extract_doc_type(content_type)
@@ -143,7 +143,8 @@ class SimpleObjectParser:
             # 保存临时文件
             temp_dir = os.path.join(self.temp_dir, str(uuid.uuid4()))
             os.makedirs(temp_dir, exist_ok=True)
-            file_path = os.path.join(temp_dir, object_name)
+            file_path = os.path.join(temp_dir, doc_name)
+
             with open(file_path, 'wb') as f:
                 f.write(data)
 

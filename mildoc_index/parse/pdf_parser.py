@@ -57,7 +57,7 @@ class PdfParser(BaseParser):
             pdf_name = os.path.basename(pdf_path)
 
             # 图片临时目录
-            image_dir = os.path.join(path_name, 'images')
+            image_dir = os.path.join(path_name, Config.DOC_IMAGE_DIR)
             os.makedirs(image_dir)
 
             # 解析pdf文件

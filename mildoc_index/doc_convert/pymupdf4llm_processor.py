@@ -1,5 +1,6 @@
 import os
 import time
+import uuid
 
 import pymupdf4llm
 
@@ -15,9 +16,9 @@ class Pymupdf4llmProcessor(BasePdfProcessor):
     新版 PDF 处理器：PDF -> Markdown -> Document
     """
 
-    def __init__(self, image_output_dir: str = Config.TMP_FILE_DIR):
-        self.image_output_dir = image_output_dir
-        os.makedirs(image_output_dir, exist_ok=True)
+    # def __init__(self):
+        # self.image_output_dir = image_output_dir
+        # os.makedirs(image_output_dir, exist_ok=True)
 
     def parse_pdf_to_markdown(self, pdf_path: str, image_path: str) -> str | None:
         """
@@ -43,7 +44,7 @@ class Pymupdf4llmProcessor(BasePdfProcessor):
             md_text = pymupdf4llm.to_markdown(
                 pdf_path,
                 write_images=True,
-                image_path=self.image_output_dir,
+                image_path=image_path,
                 image_format="png"  # 可选：默认 'png' 或 'jpg'
             )
 
@@ -55,10 +56,17 @@ class Pymupdf4llmProcessor(BasePdfProcessor):
             logger.exception(f"Pymupdf4llmProcessor.parse_pdf_to_markdown异常")
 
 
-# if __name__ == '__main__':
-#     m = MultimodalPDFProcessor()
-#     file_path = r"D:\zbb\test\知识文档\MongoDB-test.pdf"
-#     file_name = os.path.splitext(os.path.basename(file_path))[0]
-#     doc = m.parse_pdf_to_markdown(file_path)
-#     with open(f'{Config.TMP_FILE_DIR}/{file_name}.md', 'w', encoding='utf-8') as f:
-#         f.write(doc.text)
+if __name__ == '__main__':
+    m = Pymupdf4llmProcessor()
+    file_path = r"D:\zbb\test\知识文档\MongoDB-test.pdf"
+    file_name = os.path.splitext(os.path.basename(file_path))[0]
+    temp_dir = os.path.join(Config.TMP_FILE_DIR, str(uuid.uuid4()))
+    os.makedirs(temp_dir)
+
+    image_path = os.path.join(temp_dir , Config.DOC_IMAGE_DIR)
+    os.makedirs(image_path)
+
+    doc = m.parse_pdf_to_markdown(file_path, image_path)
+    md_path = os.path.join(temp_dir, f'{file_name}.md')
+    with open(md_path, 'w', encoding='utf-8') as f:
+        f.write(doc)

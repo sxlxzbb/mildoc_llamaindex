@@ -45,6 +45,7 @@ class Config:
     OSS_ENDPOINT: str = os.getenv("OSS_ENDPOINT")
     OSS_BUCKET_NAME: str = os.getenv("OSS_BUCKET_NAME")
     OSS_IMAGE_PATH: str = os.getenv("OSS_IMAGE_PATH", '')
+    DOC_IMAGE_DIR: str = os.getenv("DOC_IMAGE_DIR", 'images')
 
     # soffice doc文件转pdf文档工具路径
     SOFFICE_PATH: str = os.getenv("SOFFICE_PATH")

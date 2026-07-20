@@ -208,7 +208,7 @@ class DocumentIngestionPipeline:
             # 覆盖上传 / 重传保护：同一 doc_id 已存在于 docstore 时，先清理其旧向量数据
             # （Milvus / docstore / index_store / ingestion cache），避免 UPSERTS_ONLY 策略下
             # 旧节点残留造成重复检索。首次摄取时 docstore 中无该 doc_id，会自动跳过。
-            self._delete_old_if_exists(doc)
+            # self._delete_old_if_exists(doc)
 
             if file_type in ('.markdown', '.md'):
                 pipeline_nodes = self.markdown_pipeline.run(documents=[doc], show_progress=True)
@@ -293,6 +293,7 @@ class DocumentIngestionPipeline:
             self.milvus_vector_store.client.load_collection(
                 self.milvus_vector_store.collection_name
             )
+            logger.info(f"已加载集合 {self.milvus_vector_store.collection_name}")
         except Exception:
             logger.exception(f"加载 Milvus 集合失败（删除前）：{doc_path_name}")
 
@@ -303,17 +304,23 @@ class DocumentIngestionPipeline:
         except Exception:
             logger.exception(f"从 Milvus 删除向量数据失败：{doc_path_name}")
 
-        # 2. 删除 docstore + index_store 中的文档引用信息
+        # 2. 删除 docstore 中的文档引用信息
+        #    说明：llama-index-core >= 0.11 起 StorageContext 已无 delete_ref_doc 方法，
+        #    且 index_store 改为按 index_id 存储索引结构、不再提供按 ref_doc 的删除，
+        #    因此只需从 docstore 删除该文档及其关联节点即可（向量已在第 1 步从 Milvus 删除）。
         try:
-            self.storage_context.delete_ref_doc(doc_id, delete_from_vector_store=False)
-            logger.info(f"已从 docstore/index_store 删除文档引用：{doc_path_name}")
+            # self.storage_context.docstore.delete_ref_doc(doc_id, raise_error=False)
+            self.redis_document_store.delete_document(doc_id, raise_error=False)
+            logger.info(f"已从 docstore 删除文档引用：{doc_path_name}")
         except Exception:
-            logger.exception(f"从 docstore/index_store 删除失败：{doc_path_name}")
+            logger.exception(f"从 docstore 删除失败：{doc_path_name}")
 
-        # 3. 单独清理 ingestion cache（delete_ref_doc 不会清理 cache，
-        #    不清理会导致同名文件重传时命中旧缓存而不重新解析）
+        # 3. 清理 ingestion cache
+        #    说明：llama-index-core >= 0.11 起 IngestionCache 已无 delete 方法，
+        #    且缓存 key 为内容 hash 而非 doc_id，无法按文档精确删除，只能整体 clear。
+        #    整体 clear 会导致所有文档在下次摄取时重新解析，但能保证同名文件重传时不命中旧缓存。
         try:
-            self.ingestion_cache.delete(doc_id)
+            self.ingestion_cache.clear()
             logger.info(f"已清理 ingestion cache：{doc_path_name}")
         except Exception:
             logger.exception(f"清理 ingestion cache 失败：{doc_path_name}")

@@ -328,11 +328,14 @@ class MinioEventHandler:
 
 
 if __name__ == '__main__':
-    # bucket_name = Config.MINIO_BUCKET
+    bucket_name = Config.MINIO_BUCKET
     # object_name = '公司文档/汇视威人事管理流程.docx'
     object_name = '公司文档/MongoDB-test.md'
 
-    # handler = MinioEventHandler()
+    handler = MinioEventHandler()
     # handler._process_single_object(bucket_name, object_name)
+
+    doc_path_name = f"{bucket_name}/{object_name}"
+    handler.ingestion.delete_document(doc_path_name)
 
 

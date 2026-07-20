@@ -129,7 +129,7 @@ class DocumentIngestionPipeline:
             "vector_store": self.milvus_vector_store,
             "docstore": self.redis_document_store,
             "cache": ingestion_cache,
-            "docstore_strategy": DocstoreStrategy.UPSERTS_AND_DELETE
+            "docstore_strategy": DocstoreStrategy.UPSERTS  # 默认也是这个策略
         }
         # 单独持有 cache 引用，供删除文档时清理 ingestion cache 使用
         self.ingestion_cache = ingestion_cache
@@ -205,9 +205,10 @@ class DocumentIngestionPipeline:
 
             logger.info(f"开始处理文档:{file_name}")
 
-            # 内容 hash 缓存失效：若文档内容较上次有变化，先清除该 doc 的 ingestion cache，
-            # 强制重新切分/向量化，避免 IngestionCache 返回旧节点（同路径覆盖上传场景）
-            self._bust_cache_if_content_changed(doc)
+            # 覆盖上传 / 重传保护：同一 doc_id 已存在于 docstore 时，先清理其旧向量数据
+            # （Milvus / docstore / index_store / ingestion cache），避免 UPSERTS_ONLY 策略下
+            # 旧节点残留造成重复检索。首次摄取时 docstore 中无该 doc_id，会自动跳过。
+            self._delete_old_if_exists(doc)
 
             if file_type in ('.markdown', '.md'):
                 pipeline_nodes = self.markdown_pipeline.run(documents=[doc], show_progress=True)
@@ -256,39 +257,25 @@ class DocumentIngestionPipeline:
         return success_docs, fail_docs
 
 
-    def _bust_cache_if_content_changed(self, doc: Document) -> None:
+    def _delete_old_if_exists(self, doc: Document) -> None:
         """
-        内容 hash 缓存失效：对比本次文档与 docstore 中已存文档的 doc_md5，
-        若内容变化（或旧数据无 doc_md5）则清除该 doc_id 的 ingestion cache，
-        使后续 pipeline.run 重新切分/向量化，避免缓存返回旧节点。
+        覆盖上传 / 重传保护：若同一 doc_id 的文档已存在于 docstore，
+        先清理其旧向量数据（Milvus / docstore / index_store / ingestion cache），
+        避免 UPSERTS_ONLY 策略下旧节点残留造成重复检索。
+        首次摄取时 docstore 中无该 doc_id，自动跳过（不报错）。
         """
         doc_id = doc.doc_id
-        curr_md5 = doc.metadata.get("doc_md5")
-        if not curr_md5:
-            return
-
-        # 读取 docstore 中已存在的同 doc_id 文档
-        prev_doc = None
         try:
-            prev_doc = self.redis_document_store.get_document(doc_id)
-        except KeyError:
-            # 文档不存在（首次摄取），cache 本就是空的，无需清除
-            prev_doc = None
+            existing = self.redis_document_store.get_document(doc_id)
         except Exception:
-            logger.exception(f"读取 docstore 旧文档失败，跳过缓存失效判断：{doc_id}")
-            prev_doc = None
-
-        if prev_doc is None:
+            logger.exception(f"读取 docstore 判断文档是否已存在失败，跳过旧数据清理：{doc_id}")
             return
 
-        prev_md5 = prev_doc.metadata.get("doc_md5") if getattr(prev_doc, "metadata", None) else None
-        # 内容变化 或 旧数据无 doc_md5：清除缓存强制重算
-        if prev_md5 != curr_md5:
-            try:
-                self.ingestion_cache.delete(doc_id)
-                logger.info(f"文档内容已变化，已清除 ingestion cache 强制重新向量化：{doc_id}")
-            except Exception:
-                logger.exception(f"清除 ingestion cache 失败：{doc_id}")
+        if existing is None:
+            return
+
+        logger.info(f"文档已存在（覆盖上传/重传），先清理旧数据：{doc_id}")
+        self.delete_document(doc_id)
 
 
     def delete_document(self, doc_path_name: str) -> None:

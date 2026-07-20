@@ -2,10 +2,8 @@ from datetime import datetime
 import atexit
 import concurrent.futures
 import json
-import os
 from typing import Dict, Any, List
 
-from dotenv import load_dotenv
 from llama_index.core import Document
 from minio import Minio
 
@@ -15,18 +13,7 @@ from milvus.milvus_api import MilvusApi
 from parse.ingestion_pipeline import DocumentIngestionPipeline
 from parse.simple_object_parser import SimpleObjectParser
 
-load_dotenv()
-
 logger = setup_logging()
-
-# Minio 配置信息。
-MINIO_BUCKET = os.getenv('MINIO_BUCKET')
-MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT')
-MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
-MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
-MINIO_REGION = os.getenv('MINIO_REGION')
-MINIO_USE_VIRTUAL_HOST = os.getenv('MINIO_USE_VIRTUAL_HOST', 'false').lower() == 'true'
-MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'false').lower() == 'true'
 
 # 获取Minion客户端
 def _get_minio_client() -> Minio:
@@ -38,7 +25,7 @@ def _get_minio_client() -> Minio:
         region=Config.MINIO_REGION
     )
 
-    if MINIO_USE_VIRTUAL_HOST:
+    if Config.MINIO_USE_VIRTUAL_HOST:
         client.enable_virtual_style_endpoint()
 
     return client
@@ -48,10 +35,8 @@ class MinioEventHandler:
     def __init__(self):
         """
         初始化监听器
-        Args:
-            bucket_name(str): 要监听的桶名称，默认从环境变量读取
         """
-        self.bucket_name = bucket_name or Config.MINIO_BUCKET
+        self.bucket_name = Config.MINIO_BUCKET
 
         # 初始化各个组件
         self.minio_client = _get_minio_client()
@@ -69,7 +54,7 @@ class MinioEventHandler:
 
         # 事件处理专用线程池：与 OSS 图片上传池隔离，避免“事件处理任务内部又向同一池提交图片上传”造成的嵌套死锁。
         # 解析偏 CPU、embedding/Milvus 偏 I/O，默认取 CPU 核数；可用 MINIO_PROCESS_MAX_WORKERS 覆盖。
-        event_workers = int(os.getenv("MINIO_PROCESS_MAX_WORKERS", str(os.cpu_count() or 1)))
+        event_workers = Config.MINIO_PROCESS_MAX_WORKERS
         self._executor = concurrent.futures.ThreadPoolExecutor(
             max_workers=event_workers,
             thread_name_prefix="minio-event",
@@ -343,10 +328,11 @@ class MinioEventHandler:
 
 
 if __name__ == '__main__':
-    bucket_name = Config.MINIO_BUCKET
-    object_name = '公司文档/汇视威人事管理流程.docx'
+    # bucket_name = Config.MINIO_BUCKET
+    # object_name = '公司文档/汇视威人事管理流程.docx'
+    object_name = '公司文档/MongoDB-test.md'
 
-    handler = MinioEventHandler()
-    handler._process_single_object(bucket_name, object_name)
+    # handler = MinioEventHandler()
+    # handler._process_single_object(bucket_name, object_name)
 
 

@@ -44,6 +44,7 @@ class Config:
     OSS_ACCESS_KEY_SECRET: str = os.getenv("OSS_ACCESS_KEY_SECRET")
     OSS_ENDPOINT: str = os.getenv("OSS_ENDPOINT")
     OSS_BUCKET_NAME: str = os.getenv("OSS_BUCKET_NAME")
+    OSS_IMAGE_PATH: str = os.getenv("OSS_IMAGE_PATH", '')
 
     # soffice doc文件转pdf文档工具路径
     SOFFICE_PATH: str = os.getenv("SOFFICE_PATH")
@@ -69,3 +70,10 @@ class Config:
     MYSQL_USER: str = os.getenv("MYSQL_USER")
     MYSQL_PASSWORD: str = os.getenv("MYSQL_PASSWORD")
     MYSQL_DATABASE: str = os.getenv("MYSQL_DATABASE")
+
+    # 解析偏 CPU、embedding/Milvus 偏 I/O，默认取 CPU 核数；可用 MINIO_PROCESS_MAX_WORKERS 覆盖。
+    MINIO_PROCESS_MAX_WORKERS: int = int(os.getenv("MINIO_PROCESS_MAX_WORKERS", str(os.cpu_count() or 1)))
+    # I/O 密集型任务，默认线程数为 CPU 核数 * 2；可通过 OSS_UPLOAD_MAX_WORKERS 显式覆盖
+    OSS_UPLOAD_MAX_WORKERS: int = int(os.getenv("OSS_UPLOAD_MAX_WORKERS", str((os.cpu_count() or 1) * 2)))
+
+

@@ -6,18 +6,17 @@ import threading
 import time
 
 import oss2
-from dotenv import load_dotenv
 
+from config.config import Config
 from logger.logging import setup_logging
 
-load_dotenv()
 logger = setup_logging()
 
 # 全局共享线程池：所有 UploadImageToOSS 实例、所有请求共用，限制总线程数，避免每次调用都新建线程池导致线程膨胀
 _OSS_UPLOAD_EXECUTOR = None
 _OSS_UPLOAD_EXECUTOR_LOCK = threading.Lock()
 # I/O 密集型任务，默认线程数为 CPU 核数 * 2；可通过 OSS_UPLOAD_MAX_WORKERS 显式覆盖
-_OSS_UPLOAD_MAX_WORKERS = int(os.getenv("OSS_UPLOAD_MAX_WORKERS", str((os.cpu_count() or 1) * 2)))
+_OSS_UPLOAD_MAX_WORKERS = Config.OSS_UPLOAD_MAX_WORKERS
 
 
 def _get_oss_upload_executor() -> concurrent.futures.ThreadPoolExecutor:
@@ -42,11 +41,11 @@ def _shutdown_oss_upload_executor():
 
 class UploadImageToOSS:
     def __init__(self):
-        self.access_key_id = os.getenv("OSS_ACCESS_KEY_ID")
-        self.access_key_secret = os.getenv("OSS_ACCESS_KEY_SECRET")
-        self.endpoint = os.getenv("OSS_ENDPOINT")
-        self.bucket_name = os.getenv("OSS_BUCKET_NAME")
-        self.remote_path = os.getenv("OSS_IMAGE_PATH", '')
+        self.access_key_id = Config.OSS_ACCESS_KEY_ID
+        self.access_key_secret = Config.OSS_ACCESS_KEY_SECRET
+        self.endpoint = Config.OSS_ENDPOINT
+        self.bucket_name = Config.OSS_BUCKET_NAME
+        self.remote_path = Config.OSS_IMAGE_PATH
         self._init_oss()
 
     def _init_oss(self):

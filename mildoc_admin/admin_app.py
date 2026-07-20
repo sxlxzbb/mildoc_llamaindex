@@ -316,7 +316,7 @@ def api_file_detail(file_path):
                 file_info['doc_type'] = first_record.get('file_type', '')
                 file_info['indexed_md5'] = first_record.get('doc_md5', '')
                 file_info['doc_length'] = first_record.get('doc_length', 0)
-                file_info['embedding_model'] = first_record.get('embedding_model', '')
+                file_info['embedding_model'] = first_record.get('embedding_model', 'text-embedding-v4')
 
                 # 处理所有分片
                 for result in results:

@@ -279,10 +279,6 @@ class FileDetail {
                     <div class="info-value">${fileInfo.indexed_md5 || '-'}</div>
                 </div>
                 <div class="info-item">
-                    <div class="info-label">文档长度</div>
-                    <div class="info-value">${fileInfo.doc_length || 0} 字符</div>
-                </div>
-                <div class="info-item">
                     <div class="info-label">嵌入模型</div>
                     <div class="info-value">${fileInfo.embedding_model || '-'}</div>
                 </div>

@@ -12,7 +12,7 @@ from flask import (
 )
 
 from auth.service import authenticate, get_user_by_id
-from logger import logger
+from logger.logger import logger
 
 # 认证蓝图
 auth_bp = Blueprint('auth', __name__)

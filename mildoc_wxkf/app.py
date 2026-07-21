@@ -8,8 +8,7 @@ from flask import Flask, redirect, url_for, session
 
 from config.config import Config
 from extensions import db
-from logger import logger
-
+from logger.logger import logger
 from auth.routes import auth_bp
 from chat.routes import chat_bp
 

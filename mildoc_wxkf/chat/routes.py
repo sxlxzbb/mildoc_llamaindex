@@ -16,11 +16,11 @@ from flask import (
 )
 
 from auth.routes import login_required
-from retrieval.service import retrieve, dedupe_chunks
-from rerank.service import RerankService
+from core.retrieval import retrieve, dedupe_chunks
+from core.rerank import RerankService
 from chat.service import build_messages, stream_completion, complete_completion
 from memory.service import MemoryService
-from logger import logger
+from logger.logger import logger
 from config.config import Config
 
 chat_bp = Blueprint('chat', __name__)

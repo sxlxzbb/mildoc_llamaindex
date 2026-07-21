@@ -10,7 +10,7 @@ import hashlib
 
 from extensions import db
 from models.user import User
-from logger import logger
+from logger.logger import logger
 
 
 def md5_hash(password: str) -> str:

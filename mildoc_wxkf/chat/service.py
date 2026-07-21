@@ -5,7 +5,7 @@
 from openai import OpenAI
 
 from config.config import Config
-from logger import logger
+from logger.logger import logger
 
 
 _client = None

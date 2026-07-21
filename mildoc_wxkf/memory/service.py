@@ -18,7 +18,7 @@ import redis
 from extensions import db
 
 from config.config import Config
-from logger import logger
+from logger.logger import logger
 
 
 class MemoryService:

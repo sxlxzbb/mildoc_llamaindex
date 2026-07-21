@@ -1,22 +1,8 @@
-"""检索模块
-
-职责：将用户问题做 embedding，到 Milvus 向量库做稠密向量检索，
-召回与问题最相关的文档分片（chunk）。
-
-Milvus 集合字段（与 mildoc_index 服务保持一致）：
-- content_vector : 稠密向量（dense，维度 = MILVUS_VECTOR_DIM，默认 1024）
-- content_sparse : 稀疏向量（BM25，服务端自动生成，检索时暂未使用）
-- text           : 分片文本内容
-- file_path      : 文档路径（标量字段，如 mildoc-llamaindex/xxx.md）
-
-说明：当前实现稠密向量检索（最可靠）。如需混合检索（dense + sparse），
-可在 retrieve() 中改用 client.hybrid_search 并传入查询稀疏向量。
-"""
 from pymilvus import MilvusClient
 from openai import OpenAI
 
 from config.config import Config
-from logger import logger
+from logger.logger import logger
 
 
 # ===================== 单例客户端 =====================
@@ -50,7 +36,6 @@ def get_embed_client() -> OpenAI:
     return _embed_client
 
 
-# ===================== 数据模型 =====================
 class RetrievedChunk:
     """检索召回的一个文档分片"""
 
@@ -75,7 +60,6 @@ class RetrievedChunk:
             'doc_name': self.doc_name,
             'score': self.score,
         }
-
 
 # ===================== 核心方法 =====================
 def embed_texts(texts: list) -> list:
@@ -149,3 +133,5 @@ def dedupe_chunks(chunks: list) -> list:
             best[key] = c
     # 按得分降序返回，保证展示顺序稳定
     return sorted(best.values(), key=lambda c: c.score, reverse=True)
+
+

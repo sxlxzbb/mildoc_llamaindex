@@ -1,0 +1,22 @@
+# Flask Web framework
+Flask==3.1.2
+
+# SQLAlchemy ORM + PyMySQL driver
+Flask-SQLAlchemy==3.1.1
+SQLAlchemy==2.0.36
+PyMySQL==1.1.1
+
+# env management
+python-dotenv==1.2.1
+
+# LLM / embedding (OpenAI compatible, used for DashScope)
+openai==2.11.0
+
+# Milvus vector search client
+pymilvus==2.6.5
+
+# HTTP client for rerank (DashScope rerank service)
+requests==2.32.3
+
+# Redis client (short-term memory)
+redis==5.2.1

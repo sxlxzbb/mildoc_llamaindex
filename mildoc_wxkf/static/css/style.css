@@ -1,0 +1,161 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+                 "Microsoft YaHei", sans-serif;
+    background: #f5f6fa;
+    color: #2c3e50;
+}
+
+.container { min-height: 100vh; }
+
+/* ============ 顶部导航 ============ */
+.header {
+    background: #2c3e50;
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(0,0,0,.1);
+}
+.header-content {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 0 20px;
+    height: 60px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.logo { font-size: 20px; font-weight: 600; }
+.nav { display: flex; align-items: center; gap: 16px; }
+.user-info { font-size: 14px; opacity: .9; }
+.nav-link { color: #ecf0f1; text-decoration: none; font-size: 14px; }
+.nav-link.logout:hover { color: #e74c3c; }
+
+.main { max-width: 1200px; margin: 0 auto; padding: 24px 20px; }
+
+/* ============ 消息闪现 ============ */
+.flash-messages { margin-bottom: 16px; }
+.flash-message { padding: 10px 14px; border-radius: 6px; font-size: 14px; }
+.flash-error { background: #fdecea; color: #c0392b; }
+.flash-success { background: #eafaf1; color: #27ae60; }
+.flash-info { background: #eaf2fd; color: #2980b9; }
+
+/* ============ 登录页 ============ */
+.login-container {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+}
+.login-box {
+    width: 360px;
+    background: #fff;
+    padding: 36px 32px;
+    border-radius: 12px;
+    box-shadow: 0 10px 40px rgba(0,0,0,.2);
+}
+.login-title { text-align: center; font-size: 22px; color: #2c3e50; }
+.login-subtitle { text-align: center; color: #95a5a6; font-size: 13px; margin: 8px 0 24px; }
+.login-form .form-group { margin-bottom: 18px; }
+.form-label { display: block; font-size: 13px; color: #555; margin-bottom: 6px; }
+.form-input {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid #dcdfe6;
+    border-radius: 6px;
+    font-size: 14px;
+    outline: none;
+    transition: border-color .2s;
+}
+.form-input:focus { border-color: #667eea; }
+.login-btn {
+    width: 100%;
+    padding: 11px;
+    border: none;
+    border-radius: 6px;
+    background: #667eea;
+    color: #fff;
+    font-size: 15px;
+    cursor: pointer;
+    transition: background .2s;
+}
+.login-btn:hover { background: #5a6fd6; }
+.login-btn:disabled { background: #aab2e8; cursor: not-allowed; }
+.form-error { color: #e74c3c; font-size: 13px; min-height: 18px; margin-bottom: 8px; }
+
+/* ============ 聊天页 ============ */
+.chat-container {
+    max-width: 900px;
+    margin: 24px auto;
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 12px rgba(0,0,0,.08);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    height: calc(100vh - 120px);
+}
+.chat-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid #eee;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+.chat-header h2 { font-size: 18px; }
+.clear-btn {
+    border: 1px solid #dcdfe6;
+    background: #fff;
+    color: #666;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 13px;
+    cursor: pointer;
+}
+.clear-btn:hover { background: #f5f6fa; }
+.chat-body { flex: 1; padding: 20px; overflow-y: auto; }
+.msg { margin-bottom: 18px; max-width: 85%; }
+.msg-user { margin-left: auto; }
+.msg-ai { margin-right: auto; }
+.msg-role { font-size: 12px; color: #95a5a6; margin-bottom: 4px; }
+.msg-content {
+    padding: 10px 14px;
+    border-radius: 10px;
+    font-size: 14px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.msg-user .msg-content { background: #667eea; color: #fff; border-top-right-radius: 2px; }
+.msg-ai .msg-content { background: #f1f3f9; color: #2c3e50; border-top-left-radius: 2px; }
+.msg-sources { margin-top: 6px; font-size: 12px; color: #95a5a6; }
+.src-title { margin-bottom: 2px; }
+.src-item { padding: 2px 0; }
+.chat-input-area {
+    border-top: 1px solid #eee;
+    padding: 12px 16px;
+    display: flex;
+    gap: 10px;
+}
+.chat-input {
+    flex: 1;
+    resize: none;
+    border: 1px solid #dcdfe6;
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 14px;
+    outline: none;
+    height: 52px;
+    max-height: 140px;
+    font-family: inherit;
+}
+.chat-input:focus { border-color: #667eea; }
+.chat-send {
+    padding: 0 22px;
+    border: none;
+    border-radius: 6px;
+    background: #667eea;
+    color: #fff;
+    cursor: pointer;
+}
+.chat-send:disabled { background: #aab2e8; cursor: not-allowed; }

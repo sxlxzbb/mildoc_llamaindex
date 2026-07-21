@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+
+{% block title %}智能问答 - MilDoc{% endblock %}
+
+{% block content %}
+<div class="chat-container">
+    <div class="chat-header">
+        <h2>MilDoc 智能问答</h2>
+        <button id="clearBtn" class="clear-btn" title="清空对话">清空</button>
+    </div>
+    <div class="chat-body" id="chatBody"></div>
+    <div class="chat-input-area">
+        <textarea id="chatInput" class="chat-input" placeholder="请输入你的问题，Enter 发送，Shift+Enter 换行..."></textarea>
+        <button id="sendBtn" class="chat-send">发送</button>
+    </div>
+</div>
+
+<template id="msgTpl">
+    <div class="msg">
+        <div class="msg-role"></div>
+        <div class="msg-content"></div>
+        <div class="msg-sources"></div>
+    </div>
+</template>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const chatBody = document.getElementById('chatBody');
+const input = document.getElementById('chatInput');
+const sendBtn = document.getElementById('sendBtn');
+const clearBtn = document.getElementById('clearBtn');
+const tpl = document.getElementById('msgTpl');
+
+function addMessage(role, content = '') {
+    const node = tpl.content.cloneNode(true);
+    const el = node.querySelector('.msg');
+    el.classList.add(role === 'user' ? 'msg-user' : 'msg-ai');
+    el.querySelector('.msg-role').textContent = role === 'user' ? '我' : '助手';
+    const contentEl = el.querySelector('.msg-content');
+    contentEl.textContent = content;
+    chatBody.appendChild(node);
+    chatBody.scrollTop = chatBody.scrollHeight;
+    return { el, contentEl, sourcesEl: el.querySelector('.msg-sources') };
+}
+
+function renderSources(sourcesEl, sources) {
+    if (!sources || !sources.length) return;
+    const title = document.createElement('div');
+    title.className = 'src-title';
+    title.textContent = '参考来源：';
+    sourcesEl.appendChild(title);
+    sources.forEach(s => {
+        const item = document.createElement('div');
+        item.className = 'src-item';
+        item.textContent = (s.file_path || s.doc_name || '未知来源');
+        sourcesEl.appendChild(item);
+    });
+}
+
+let busy = false;
+
+async function send() {
+    const text = input.value.trim();
+    if (!text || busy) return;
+    busy = true;
+    input.value = '';
+    sendBtn.disabled = true;
+
+    addMessage('user', text);
+    const ai = addMessage('ai', '');
+
+    let completed = false;  // 已收到 finished 事件则视为成功完成
+
+    try {
+        const resp = await fetch('/api/chat', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: text, stream: true })
+        });
+
+        if (!resp.ok) {
+            const err = await resp.json().catch(() => ({}));
+            ai.contentEl.textContent = '请求失败：' + (err.error || resp.status);
+            return;
+        }
+
+        const reader = resp.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        let sources = null;
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n\n');
+            buffer = lines.pop();
+            for (const line of lines) {
+                const trimmed = line.trim();
+                if (!trimmed.startsWith('data:')) continue;
+                const jsonStr = trimmed.slice(5).trim();
+                if (!jsonStr) continue;
+                try {
+                    const data = JSON.parse(jsonStr);
+                    if (data.content) ai.contentEl.textContent += data.content;
+                    if (data.finished) {
+                        completed = true;
+                        sources = data.sources || null;
+                    }
+                    if (data.error) ai.contentEl.textContent += '\n[错误] ' + data.error;
+                } catch (e) { /* 忽略不完整片段 */ }
+            }
+            chatBody.scrollTop = chatBody.scrollHeight;
+        }
+        if (sources) renderSources(ai.sourcesEl, sources);
+    } catch (e) {
+        // 已正常收到结束事件时，忽略连接关闭导致的网络错误提示
+        if (!completed) {
+            ai.contentEl.textContent += '\n[网络错误] ' + e.message;
+        }
+    } finally {
+        busy = false;
+        sendBtn.disabled = false;
+        input.focus();
+    }
+}
+
+sendBtn.addEventListener('click', send);
+input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        send();
+    }
+});
+clearBtn.addEventListener('click', () => {
+    chatBody.innerHTML = '';
+});
+</script>
+{% endblock %}

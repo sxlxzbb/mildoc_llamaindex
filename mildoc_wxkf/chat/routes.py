@@ -79,6 +79,8 @@ def chat():
     use_stream = bool(data.get('stream', True))
     username = session.get('username')
 
+    logger.info(f"用户问题：{message}, history:{history}")
+
     # 1. 检索
     try:
         chunks = retrieve(message)

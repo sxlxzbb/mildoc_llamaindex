@@ -29,8 +29,10 @@ class MarkdownParser(BaseParser):
         :param file_size:
         :return:
         """
-
-        return self.default_parse(markdown_path, doc_path_name)
+        docs = self.default_parse(markdown_path, doc_path_name)
+        doc = docs[0]
+        doc.metadata['file_type'] = FileType.MARKDOWN.value
+        return docs
 
         # if not os.path.exists(markdown_path):
         #     logger.info(f"MarkdownParser.parse文件不存在:{markdown_path}")

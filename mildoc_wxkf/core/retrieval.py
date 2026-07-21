@@ -2,6 +2,7 @@ from pymilvus import MilvusClient
 from openai import OpenAI
 
 from config.config import Config
+from core import RerankService
 from logger.logger import logger
 
 
@@ -134,4 +135,22 @@ def dedupe_chunks(chunks: list) -> list:
     # 按得分降序返回，保证展示顺序稳定
     return sorted(best.values(), key=lambda c: c.score, reverse=True)
 
+
+if __name__ == '__main__':
+    message = "员工享都有哪些假期"
+
+    # 检索
+    chunks = retrieve(message)
+    print("-------------------检索结果-----------------------")
+    for i, chunk in enumerate(chunks):
+        print(f"chunk-{i}：{chunk.content}")
+        print('\n\n')
+
+    # 重排序
+    chunks = RerankService.rerank(message, chunks, top_n=Config.TOP_N)
+
+    print("-------------------重排序结果-----------------------")
+    for i, chunk in enumerate(chunks):
+        print(f"chunk-{i}：{chunk.content}")
+        print('\n\n')
 

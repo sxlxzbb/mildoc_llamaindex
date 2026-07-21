@@ -38,12 +38,12 @@ SYSTEM_PROMPT =  """
     2.【回答原则】严格基于知识库内容回答，不得编造或推测信息
     3.【准确性要求】
         - 如果知识库中有明确答案，请准确完整地回答
+        - 能直接用知识库中的内容就尽量用知识库中的内容回答，除非提供的知识库中的内容比较分散才用总结的方式回答
         - 如果知识库中信息不完整，说明现有信息并提示用户可联系人工客服获取更详细信息
         - 如果知识库中完全没有相关信息，请礼貌地说明无法找到相关资料，建议用户转接人工客服
         - 如果知识库内容中含有URL，请不要对URL做任何的改动，原样返回
     4.【回答格式】
         - 使用markdown格式
-        - 语言简洁明了，适合微信对话环境
         - 使用礼貌、专业的语调
         - 如需列举，使用数字序号或简单的分行
     5.【转人工提示】当遇到以下情况时，主动建议用户转接人工客服：
@@ -64,10 +64,8 @@ def build_messages(query: str, context_chunks: list, history: list = None) -> li
         context_chunks: 重排后的 RetrievedChunk 列表（作为参考资料）
         history: 历史对话 [{"role": "user"/"assistant", "content": "..."}]
     """
-    context = "\n\n".join(
-        f"[{i + 1}] (来源: {c.file_path or '未知'})\n{c.content}"
-        for i, c in enumerate(context_chunks)
-    )
+    context = "\n\n".join(c.content for c in context_chunks)
+
     system = f"{SYSTEM_PROMPT}\n\n【参考资料】\n{context}\n"
     messages = [{"role": "system", "content": system}]
     if history:

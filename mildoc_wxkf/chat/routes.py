@@ -86,6 +86,10 @@ def chat():
         logger.error(f"检索失败: {e}")
         return jsonify({'error': f'检索失败: {str(e)}'}), 500
 
+    if not chunks:
+        logger.info(f"检索结果为空:{message}")
+        return jsonify({'answer': '抱歉，检索结果为空，我暂时无法理解您的问题'})
+
     # 2. 重排序
     chunks = RerankService.rerank(message, chunks, top_n=Config.TOP_N)
     # 参考来源去重（同一文档只保留一条，按得分最高）

@@ -80,6 +80,6 @@ class Config:
     MEMORY_MAX_TURNS: int = int(os.getenv("MEMORY_MAX_TURNS", "20"))  # 短期记忆保留的最大消息条数
 
     # 向量检索返片段数
-    TOP_K: int = int(os.getenv("TOP_K", "10"))
+    TOP_K: int = int(os.getenv("TOP_K", "20"))
     # 重排序后返回的片段数
-    TOP_N: int = int(os.getenv("TOP_N", "5"))
+    TOP_N: int = int(os.getenv("TOP_N", "10"))

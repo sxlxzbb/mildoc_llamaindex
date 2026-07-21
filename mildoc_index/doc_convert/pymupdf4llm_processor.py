@@ -41,12 +41,18 @@ class Pymupdf4llmProcessor(BasePdfProcessor):
             start_time = int(time.time() * 1000)
             logger.info(f"Pymupdf4llmProcessor.parse_pdf_to_markdown开始执行:{pdf_name}")
 
-            md_text = pymupdf4llm.to_markdown(
-                pdf_path,
-                write_images=True,
-                image_path=image_path,
-                image_format="png"  # 可选：默认 'png' 或 'jpg'
-            )
+            if Config.UPLOAD_IMAGE_TO_OSS:
+                md_text = pymupdf4llm.to_markdown(
+                    pdf_path,
+                    write_images=True,
+                    image_path=image_path,
+                    image_format="png"  # 可选：默认 'png' 或 'jpg'
+                )
+            else:
+                md_text = pymupdf4llm.to_markdown(
+                    pdf_path,
+                    write_images=False,
+                )
 
             logger.info(f"Pymupdf4llmProcessor.parse_pdf_to_markdown执行完成,{pdf_name},耗时:{int(time.time() * 1000) - start_time}ms")
 

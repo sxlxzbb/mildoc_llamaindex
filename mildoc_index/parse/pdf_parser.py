@@ -76,17 +76,24 @@ class PdfParser(BaseParser):
                     'creation_date': date.today().strftime("%Y-%m-%d"),
                     "file_name": pdf_name,
                     "file_path": doc_path_name,
-                    "file_type": FileType.MARKDOWN.value,  # 标记类型，方便后续处理
                     "file_size": file_size
                 }
             )
 
+            if isinstance(self.pdf_processor, Pymupdf4llmProcessor) or isinstance(self.pdf_processor, MineruPdfProcessor):
+                file_type = FileType.MARKDOWN.value
+            else:
+                file_type = FileType.TEXT.value
+
+            doc.metadata['file_type'] = file_type
+
             # 如果是通过第三方工具解析的，识别Markdown中的图片并上传OSS
             new_content = None
-            if isinstance(self.pdf_processor, Pymupdf4llmProcessor) or isinstance(self.pdf_processor, MineruPdfProcessor):
-                new_content = self.oss_upload.upload_markdown_image_to_oss(content, pdf_path)
+            if (Config.UPLOAD_IMAGE_TO_OSS and
+                    (isinstance(self.pdf_processor, Pymupdf4llmProcessor) or isinstance(self.pdf_processor, MineruPdfProcessor))):
+                    new_content = self.oss_upload.upload_markdown_image_to_oss(content, pdf_path)
             else:
-                doc.metadata['file_type'] = FileType.TEXT.value
+                logger.info(f"不再处理文档中的图片,UPLOAD_IMAGE_TO_OSS={Config.UPLOAD_IMAGE_TO_OSS},pdf_processor={type(self.pdf_processor)}")
 
             if not new_content:
                 logger.info(f"PdfParser.parse替换Markdown文件中的图片返回结果为空:{pdf_name}")

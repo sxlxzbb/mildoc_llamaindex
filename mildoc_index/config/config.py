@@ -77,4 +77,7 @@ class Config:
     # I/O 密集型任务，默认线程数为 CPU 核数 * 2；可通过 OSS_UPLOAD_MAX_WORKERS 显式覆盖
     OSS_UPLOAD_MAX_WORKERS: int = int(os.getenv("OSS_UPLOAD_MAX_WORKERS", str((os.cpu_count() or 1) * 2)))
 
+    # 是否将文档中的图片上传OSS
+    UPLOAD_IMAGE_TO_OSS = os.getenv('UPLOAD_IMAGE_TO_OSS', 'false') == 'true'
+
 

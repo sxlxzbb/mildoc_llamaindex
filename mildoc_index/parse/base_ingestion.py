@@ -252,10 +252,21 @@ class BaseDocumentIngestionPipeline:
         except Exception:
             logger.exception(f"从 Milvus 删除向量数据失败：{doc_path_name}")
 
-        # 2. 删除 docstore 中的文档引用信息
+        # 2. 删除 docstore 中的文档数据（含层次解析产生的父/子节点）
+        #    说明：ingest_document 已把 HierarchicalNodeParser 产出的全部「父-子」节点写入
+        #    docstore，每个节点以各自的 node_id 为 key、ref_doc_id 指向本文档 doc_id。
+        #    - delete_document(doc_id) 仅删除「恰好以 doc_id 为 key」的那一条（原始 Document
+        #      节点），无法清理以自身 node_id 存储的父/子节点，会留下孤儿节点；
+        #    - delete_ref_doc(doc_id) 才会遍历 ref_doc_info.node_ids，级联删除所有父/子节点，
+        #      并清除 ref_doc 记录（结尾还会顺手删掉 node_collection[doc_id]，即原始文档节点）。
+        #    两者配合：
+        #    * 新/修复后的文档：delete_ref_doc 已级联清理父/子 + 原始节点 + ref_doc 记录；
+        #    * 旧版仅含原始 Document、无 ref_doc_info 的文档：delete_ref_doc 会提前返回，
+        #      此时由 delete_document 兜底删除原始节点。两种情形都不会残留。
         try:
+            self.redis_document_store.delete_ref_doc(doc_id, raise_error=False)
             self.redis_document_store.delete_document(doc_id, raise_error=False)
-            logger.info(f"已从 docstore 删除文档引用：{doc_path_name}")
+            logger.info(f"已从 docstore 删除文档引用（含父/子节点）：{doc_path_name}")
         except Exception:
             logger.exception(f"从 docstore 删除失败：{doc_path_name}")
 

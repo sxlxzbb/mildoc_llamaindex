@@ -159,6 +159,16 @@ class HierarchicalDocumentIngestionPipeline(BaseDocumentIngestionPipeline):
                 logger.info(f"{result},file_name:{file_name}")
                 return "success", result, all_nodes
 
+            # IngestionPipeline 在「配置了 docstore 但没有 vector_store」时，
+            # run() 内部 _update_docstore 收到的是 nodes_to_run（即转换前的原始 Document），
+            # 而不是 HierarchicalNodeParser 产出的「父-子」层级节点。也就是说，管道只把
+            # 原始 Document 写进了 docstore，父/子节点本身并未入库。
+            # 而 AutoMergingRetriever 在检索时会按 leaf.parent_node / next_node 去 docstore
+            # 取父节点，取不到就会抛 "doc_id ... not found"。
+            # 这里把转换后的「全部（父+子）节点」显式写回 docstore，覆盖管道写入的原始
+            # 文档，使父节点可被 docstore 检索并参与合并。
+            self.redis_document_store.add_documents(all_nodes)
+
             # 2) 从同一批节点里筛出 leaf（无 CHILD 关系 = 叶子），只把叶子写向量库
             #    使用 llama_index 官方 helper，等价手写过滤，更地道
             leaf_nodes = get_leaf_nodes(all_nodes)

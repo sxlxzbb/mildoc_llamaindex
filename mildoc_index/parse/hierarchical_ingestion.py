@@ -2,22 +2,36 @@
 
 区别：用 HierarchicalNodeParser 取代原有的 SentenceSplitter / MarkdownNodeParser，
 把文档切成「父-子」层级节点（叶子是细粒度小块，父节点是若干叶子的合并）。
-这样既保留稠密 + BM25 稀疏混合检索，又能在检索端用 AutoMergingRetriever
-将召回的多个叶子节点自动合并为更大的父节点，提升长上下文问答的召回精确度。
 
-模型/存储/摄取/删除等公共逻辑全部复用基类；本文件只实现：
+模型/存储/删除等公共逻辑全部复用基类；本文件只实现：
 - _resolve_storage_namespaces()：指向独立的集合 / Redis 命名空间（A/B 对比）
-- _create_pipelines()：用 HierarchicalNodeParser 构建管道
+- _create_pipelines()：用 HierarchicalNodeParser 构建「docstore 专用管道」
+- ingest_document()：只把 leaf（叶子）节点写 Milvus，全部节点（父+子）写 docstore
+
+为什么只把 leaf 写向量库：
+HierarchicalNodeParser 返回的是「父+子」扁平节点列表，两者都会被 embedding 并写入
+Milvus。但 AutoMergingRetriever 的工作方式是：先按相似度召回若干 leaf，再根据
+leaf.parent_node 引用去 docstore 取父节点完整文本做合并（见 auto_merging_retriever.py）。
+也就是说——检索只用 leaf 的向量，父节点的向量纯属冗余（占 Milvus 空间，还可能稀释精度）。
+因此这里刻意拆开：
+  1) docstore 专用管道只解析+落盘全部节点（父+子）到 Redis docstore，并保留
+     IngestionCache 去重（重复文档该管道返回空，即「重复上传」）；
+  2) 从同一批节点里筛出 leaf（无 CHILD 关系的节点），单独 embedding 后只写入 Milvus。
+这样父子节点 ID 完全一致（同一次解析），且父节点向量不再进 Milvus。
 
 默认行为不变：_get_ingestion_pipeline() 在 NODE_PARSER_MODE != 'hierarchical' 时
 返回原始的 DocumentIngestionPipeline（基类默认命名空间），因此零改动。
 """
+import os
+
 from llama_index.core import SimpleDirectoryReader, Settings
 from llama_index.core.node_parser import (
     SentenceSplitter,
     MarkdownNodeParser,
     HierarchicalNodeParser,
+    get_leaf_nodes,
 )
+from llama_index.core.schema import MetadataMode
 from llama_index.core.extractors import TitleExtractor
 from llama_index.core.ingestion import IngestionPipeline, DocstoreStrategy
 
@@ -31,7 +45,11 @@ logger = setup_logging()
 
 
 class HierarchicalDocumentIngestionPipeline(BaseDocumentIngestionPipeline):
-    """层次节点解析器摄取管道（HierarchicalNodeParser 版）。"""
+    """层次节点解析器摄取管道（HierarchicalNodeParser 版）。
+
+    关键约定：同一次解析产出的父子节点共享一致 ID（llama_index 默认 id_func 是随机
+    uuid，所以必须「只解析一次」，再从中分流到 docstore / 向量库，不能解析两遍）。
+    """
 
     def _resolve_storage_namespaces(self):
         """A/B 对比：返回独立集合 / Redis 命名空间"""
@@ -43,29 +61,31 @@ class HierarchicalDocumentIngestionPipeline(BaseDocumentIngestionPipeline):
         )
 
     def _create_pipelines(self):
-        """创建层次解析管道（适配新版 HierarchicalNodeParser API）。
+        """创建「docstore 专用」解析管道。
 
-        新版 from_defaults() 已无 node_parser 参数：
-        - 只传 chunk_sizes -> 每一层自动用 SentenceSplitter 切分，形成「大块->小块」父子层级；
-        - 若要某层用自定义 parser（如 Markdown 顶层保留标题），改用
-          node_parser_ids + node_parser_map 显式指定每层解析器。
+        只解析 + 落盘全部节点（父+子）到 docstore，并保留 IngestionCache 去重。
+        注意：这里【不传 vector_store、不加 embed_model】——
+        - 不传 vector_store：全部节点只进 docstore，不进 Milvus（父节点向量不浪费）；
+        - 不加 embed_model：父节点不需要 embedding（检索不靠它的向量），省一次嵌入调用。
         """
+        # 该管道只写 docstore、不写 vector_store，故用 DUPLICATES_ONLY
+        #（UPSERTS 需配合 vector_store，无 vector_store 时会被 llama_index 静默降级为
+        #  duplicates_only，这里直接显式声明，避免告警）。去重真正依赖 IngestionCache。
         common_config = {
-            "vector_store": self.milvus_vector_store,
             "docstore": self.redis_document_store,
             "cache": self.ingestion_cache,
-            "docstore_strategy": DocstoreStrategy.UPSERTS,
+            "docstore_strategy": DocstoreStrategy.DUPLICATES_ONLY,
+            # 刻意不传 vector_store -> 全部节点只写 docstore
         }
 
         # 文本类：直接用 chunk_sizes，由 HierarchicalNodeParser 在每层用 SentenceSplitter 切分，
-        # 形成「大块 -> 小块」的父子层级节点。
-        self.text_pipeline = IngestionPipeline(
+        # 形成「大块 -> 小块」父子层级节点。
+        self.docstore_text_pipeline = IngestionPipeline(
             transformations=[
                 HierarchicalNodeParser.from_defaults(
                     chunk_sizes=Config.HIERARCHICAL_CHUNK_SIZES,
                 ),
                 TitleExtractor(nodes=Config.TITLE_EXTRACTOR_NODES),
-                Settings.embed_model,
             ],
             **common_config,
         )
@@ -83,7 +103,7 @@ class HierarchicalDocumentIngestionPipeline(BaseDocumentIngestionPipeline):
             include_metadata=True,
             include_prev_next_rel=True,
         )
-        self.markdown_pipeline = IngestionPipeline(
+        self.docstore_markdown_pipeline = IngestionPipeline(
             transformations=[
                 HierarchicalNodeParser.from_defaults(
                     node_parser_ids=node_parser_ids,
@@ -92,10 +112,77 @@ class HierarchicalDocumentIngestionPipeline(BaseDocumentIngestionPipeline):
                     include_prev_next_rel=True,
                 ),
                 TitleExtractor(nodes=Config.TITLE_EXTRACTOR_NODES),
-                Settings.embed_model,
             ],
             **common_config,
         )
+
+        # 兼容基类属性名（ingest_document 已被本类覆写，此处仅为稳健）
+        self.text_pipeline = self.docstore_text_pipeline
+        self.markdown_pipeline = self.docstore_markdown_pipeline
+
+
+    def ingest_document(self, doc):
+        """摄取文档：解析一次 -> 全部节点写 docstore -> 仅 leaf 写 Milvus。
+
+        相比基类：把「全部节点写 Milvus」改为「仅叶子节点写 Milvus」，父节点只留 docstore。
+        去重信号保留：docstore 管道命中 IngestionCache 时返回空，即判定为重复上传。
+        """
+        try:
+            if not doc:
+                logger.info("文档摄取，入参文档为空")
+                return "error", "入参文档为空", None
+
+            file_name = doc.metadata.get("file_name")
+            file_type = doc.metadata.get("file_type")
+            if not file_type and file_name:
+                file_type = os.path.splitext(os.path.basename(file_name))[1]
+
+            if not file_type:
+                logger.info(f"无法确定文件类型,file_name:{file_name}")
+                return "error", "未知的文件类型", None
+
+            logger.info(f"开始处理文档:{file_name}")
+
+            # 1) 唯一一次解析：全部节点（父+子）写 docstore，并做缓存去重
+            if file_type in ('.markdown', '.md'):
+                all_nodes = self.docstore_markdown_pipeline.run(
+                    documents=[doc], show_progress=True
+                )
+            else:
+                all_nodes = self.docstore_text_pipeline.run(
+                    documents=[doc], show_progress=True
+                )
+
+            # 命中缓存（文档重复上传）-> 管道返回空，跳过重传
+            if not all_nodes:
+                result = "文档重复上传，无需更新索引"
+                logger.info(f"{result},file_name:{file_name}")
+                return "success", result, all_nodes
+
+            # 2) 从同一批节点里筛出 leaf（无 CHILD 关系 = 叶子），只把叶子写向量库
+            #    使用 llama_index 官方 helper，等价手写过滤，更地道
+            leaf_nodes = get_leaf_nodes(all_nodes)
+            for n in leaf_nodes:
+                # 单独为叶子做 embedding（父节点不嵌入，省一次嵌入调用）
+                n.embedding = Settings.embed_model.get_text_embedding(
+                    n.get_content(metadata_mode=MetadataMode.NONE)
+                )
+            self.milvus_vector_store.add(leaf_nodes)
+
+            logger.info(
+                f"文件[{file_name}]处理完成, 生成 {len(all_nodes)} 个节点(父+子), "
+                f"其中 {len(leaf_nodes)} 个叶子已写入向量库"
+            )
+
+            result = (
+                f"文档摄取成功，生成了 {len(all_nodes)} 个节点"
+                f"（仅 {len(leaf_nodes)} 个叶子写入向量库，父节点只留 docstore）"
+            )
+            return "success", result, all_nodes
+        except Exception as e:
+            logger.exception('文档摄取异常')
+            error_msg = f"文档摄取失败: {str(e)}"
+            return "error", error_msg, ""
 
 
 if __name__ == '__main__':

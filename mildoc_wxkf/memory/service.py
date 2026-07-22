@@ -50,13 +50,21 @@ class MemoryService:
         return f"memory:{username}:session"
 
     def _current_session(self, username: str) -> str:
-        """获取当前会话 ID，不存在则生成新的并写入 Redis（带 TTL）"""
+        """获取当前会话 ID，不存在则生成新的并写入 Redis（带 TTL）。
+
+        会话 key 采用「滑动续期」：每次命中已存在的会话都刷新 TTL，
+        因此只要用户持续活跃（两次消息间隔不超过 TTL），session_id 就保持不变；
+        超过 TTL 无任何活动才会过期并生成新的 session_id。
+        """
         try:
             r = self._get_redis()
             sid = r.get(self._session_key(username))
             if not sid:
                 sid = uuid.uuid4().hex
                 r.set(self._session_key(username), sid, ex=Config.REDIS_TTL_SECONDS)
+            else:
+                # 滑动续期：把会话 key 的过期时间从「现在」重新算 TTL
+                r.expire(self._session_key(username), Config.REDIS_TTL_SECONDS)
             return sid
         except Exception as e:
             logger.warning(f"Redis 读取会话失败，使用内存兜底: {e}")
@@ -72,6 +80,7 @@ class MemoryService:
         max_turns = max_turns or Config.MEMORY_MAX_TURNS
         try:
             r = self._get_redis()
+            # 取最近的20条消息
             raw = r.lrange(self._key(username), -max_turns, -1)
             return [json.loads(x) for x in raw]
         except Exception as e:
@@ -89,8 +98,10 @@ class MemoryService:
         except Exception as e:
             logger.warning(f"Redis 写入失败，使用内存兜底: {e}")
             self._fallback.setdefault(username, []).append({'role': role, 'content': content})
+
         # 2. 长期记忆：MySQL 永久归档（失败不影响主流程）
         self._persist_mysql(username, role, content)
+
 
     def clear(self, username: str) -> None:
         """清空短期记忆并切换到新会话（长期记忆保留归档）"""
@@ -103,6 +114,7 @@ class MemoryService:
             self._fallback.pop(username, None)
             self._fallback_sessions.pop(username, None)
         logger.info(f"已清空用户短期对话记忆: {username}")
+
 
     # ===================== 长期记忆（MySQL） =====================
     def _persist_mysql(self, username: str, role: str, content: str) -> None:

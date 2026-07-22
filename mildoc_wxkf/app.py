@@ -49,9 +49,13 @@ def create_app(config_class: type = Config) -> Flask:
 
 if __name__ == '__main__':
     app = create_app()
+    # 注意：务必关闭 reloader。本服务使用 SSE 长连接流式返回，
+    # reloader 会监视 site-packages 等文件，任何变动都会重启进程、
+    # 掐断正在进行的流式连接，导致前端报 "[网络错误] Failed to fetch"。
     app.run(
         host=app.config['HOST'],
         port=app.config['PORT'],
         debug=app.config['DEBUG'],
+        use_reloader=False,
         threaded=True,
     )

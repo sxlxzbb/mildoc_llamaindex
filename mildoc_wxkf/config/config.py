@@ -57,6 +57,9 @@ class Config:
     LLM_BASE_URL: str = os.getenv("LLM_BASE_URL")
     TEMPERATURE: float = float(os.getenv("TEMPERATURE", "0.1"))
     MAX_TOKENS: int = int(os.getenv("MAX_TOKENS", '2000'))
+    # LLM 上下文窗口（token）。OpenAILike 默认仅 3900，会导致 COMPACT 合成器
+    # 预算为负而报错，必须按真实模型窗口显式设置（qwen 系列通常为 128k）。
+    LLM_CONTEXT_WINDOW: int = int(os.getenv("LLM_CONTEXT_WINDOW", "128000"))
 
     # ===================== Embedding =====================
     OPENAI_API_KEY: str = os.getenv("LLM_EMBEDDING_API_KEY")

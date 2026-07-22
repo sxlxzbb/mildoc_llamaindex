@@ -13,7 +13,7 @@ class RerankService:
 
         Args:
             query: 用户问题
-            chunks: _RerankAdapter 列表
+            chunks: RetrievedChunk 列表
             top_n: 返回数量
 
         Returns:

@@ -85,7 +85,7 @@ def main():
     except KeyboardInterrupt:
         logger.info("用户终端程序")
     except Exception as e:
-        logger.error(f'程序运行出错:{e}')
+        logger.exception(f'程序运行出错')
         exit(1)
 
 if __name__ == '__main__':

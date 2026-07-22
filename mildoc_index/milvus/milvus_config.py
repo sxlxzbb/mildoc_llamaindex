@@ -4,7 +4,6 @@ from enum import Enum
 from pymilvus import DataType
 from llama_index.vector_stores.milvus.utils import BM25BuiltInFunction
 
-from config.config import Config
 from logger.logging import setup_logging
 
 logger = setup_logging()

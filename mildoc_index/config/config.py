@@ -1,4 +1,5 @@
 import os
+from typing import List
 
 from dotenv import load_dotenv
 
@@ -17,6 +18,7 @@ class Config:
     MINIO_REGION: str = os.getenv("MINIO_REGION")
     MINIO_USE_VIRTUAL_HOST: bool = os.getenv('MINIO_USE_VIRTUAL_HOST', 'false').lower() == 'true'
     MINIO_USE_SSL: bool = os.getenv("MINIO_USE_SSL", 'false').lower() == 'true'
+    MINIO_BUCKET_HIER: str = os.getenv("MINIO_BUCKET_HIER")
 
     # minvus
     MILVUS_HOST: str = os.getenv("MILVUS_HOST")
@@ -27,6 +29,9 @@ class Config:
     MILVUS_COLLECTION: str = os.getenv("MILVUS_COLLECTION")
     MILVUS_INDEX_NAME: str = os.getenv("MILVUS_INDEX_NAME")
     MILVUS_VECTOR_DIM: int = int(os.getenv("MILVUS_VECTOR_DIM"))
+    MILVUS_COLLECTION_HIER: str = os.getenv("MILVUS_COLLECTION_HIER")
+    MILVUS_INDEX_NAME_HIER: str = os.getenv("MILVUS_INDEX_NAME_HIER")
+
 
     # llm
     LLM_MODEL_NAME: str = os.getenv("LLM_MODEL_NAME")
@@ -58,12 +63,31 @@ class Config:
     OVERLAP_SIZE: int = int(os.getenv("OVERLAP_SIZE", "128"))
     TITLE_EXTRACTOR_NODES: int = int(os.getenv("TITLE_EXTRACTOR_NODES"))
 
+    # ===================== 节点解析方式（A/B 对比用） =====================
+    # default      = 原逻辑（SentenceSplitter / MarkdownNodeParser）
+    # hierarchical = 层次节点解析器（HierarchicalNodeParser，生成「父-子」层级节点）
+    NODE_PARSER_MODE: str = os.getenv("NODE_PARSER_MODE", "default")
+    # 层次解析的分块层级（由大到小，单位 token），逗号分隔；
+    # 最小层会作为 HierarchicalNodeParser 的 base parser 的叶子块大小参考。
+    HIERARCHICAL_CHUNK_SIZES: List[int] = [
+        int(x) for x in os.getenv("HIERARCHICAL_CHUNK_SIZES", "2048,512").split(",") if x.strip()
+    ]
+    # 以下可留空：留空则复用上面的原集合 / Redis 命名空间。
+    # 做 A/B 对比时建议设成独立值，避免两套节点互相覆盖。
+    # HIERARCHICAL_COLLECTION: str = os.getenv("HIERARCHICAL_COLLECTION", "")
+    # HIERARCHICAL_REDIS_DOC_NS: str = os.getenv("HIERARCHICAL_REDIS_DOC_NS", "")
+    # HIERARCHICAL_REDIS_INDEX_NS: str = os.getenv("HIERARCHICAL_REDIS_INDEX_NS", "")
+    # HIERARCHICAL_REDIS_CACHE: str = os.getenv("HIERARCHICAL_REDIS_CACHE", "")
+
     # redis
     REDIS_HOST: str = os.getenv("REDIS_HOST")
     REDIS_PORT: int = int(os.getenv("REDIS_PORT"))
     REDIS_INDEX_NAME_SPACE: str = os.getenv("REDIS_INDEX_NAME_SPACE")
     REDIS_DOC_NAME_SPACE: str = os.getenv("REDIS_DOC_NAME_SPACE")
     REDIS_CACHE: str = os.getenv("REDIS_CACHE")
+    REDIS_INDEX_NAME_SPACE_HIER: str = os.getenv("REDIS_INDEX_NAME_SPACE_HIER")
+    REDIS_DOC_NAME_SPACE_HIER: str = os.getenv("REDIS_DOC_NAME_SPACE_HIER")
+    REDIS_CACHE_HIER: str = os.getenv("REDIS_CACHE_HIER")
 
     # mysql
     MYSQL_HOST: str = os.getenv("MYSQL_HOST")

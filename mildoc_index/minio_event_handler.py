@@ -10,6 +10,7 @@ from minio import Minio
 from config.config import Config
 from logger.logging import setup_logging
 from milvus.milvus_api import MilvusApi
+from parse.hierarchical_ingestion import HierarchicalDocumentIngestionPipeline
 from parse.ingestion_pipeline import DocumentIngestionPipeline
 from parse.simple_object_parser import SimpleObjectParser
 
@@ -30,13 +31,40 @@ def _get_minio_client() -> Minio:
 
     return client
 
+
+# 工厂：按配置选择摄取管道
+def _get_ingestion_pipeline():
+    """根据 NODE_PARSER_MODE 返回对应的摄取管道。
+
+    - 'hierarchical' -> HierarchicalDocumentIngestionPipeline（层次节点解析）
+    - 其它（默认）   -> DocumentIngestionPipeline（原逻辑，零改动）
+    """
+    mode = (Config.NODE_PARSER_MODE or "default").lower()
+    if mode == "hierarchical":
+        logger.info(">>> 摄取管道模式：hierarchical（层次节点解析器）")
+        return HierarchicalDocumentIngestionPipeline()
+    logger.info(">>> 摄取管道模式：default（原逻辑）")
+    return DocumentIngestionPipeline()
+
+
+def _get_minio_buck_name() -> str:
+    """
+    文件解析模式不一样,minio bucket也不一样
+    :return:
+    """
+    mode = (Config.NODE_PARSER_MODE or "default").lower()
+    if mode == "hierarchical":
+        return Config.MINIO_BUCKET_HIER
+    return Config.MINIO_BUCKET
+
+
 class MinioEventHandler:
     """MinIO事件监听器"""
     def __init__(self):
         """
         初始化监听器
         """
-        self.bucket_name = Config.MINIO_BUCKET
+        self.bucket_name = _get_minio_buck_name()
 
         # 初始化各个组件
         self.minio_client = _get_minio_client()
@@ -46,7 +74,7 @@ class MinioEventHandler:
         self.parser: SimpleObjectParser = SimpleObjectParser(minio_client=self.minio_client)
 
         logger.info("初始化文档摄取器")
-        self.ingestion = DocumentIngestionPipeline()
+        self.ingestion = _get_ingestion_pipeline()
 
         # 初始化Milvus
         logger.info("初始化Milvus...")

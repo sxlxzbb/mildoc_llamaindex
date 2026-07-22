@@ -3,44 +3,34 @@ from flask import Flask, render_template, request, redirect, url_for, flash, ses
 from minio import Minio
 from pymilvus import MilvusClient
 import os
-from dotenv import load_dotenv
 from datetime import timezone
 from functools import wraps
 import pytz
+from logger.logging import logger
+from config.config import Config
 
+_bucket_name: str = None
+_milvus_collection_name: str = None
 
-# 加载环境变量
-load_dotenv()
+def _get_minio_buck_name():
+    """
+    文件解析模式不一样,minio bucket也不一样
+    :return:
+    """
+    global _bucket_name, _milvus_collection_name
 
-
-
-# 管理员账号
-ADMIN_USERNAME = os.getenv('ADMIN_USERNAME')
-ADMIN_PASSWORD = os.getenv('ADMIN_PASSWORD')
-
-# Minio 配置
-MINIO_BUCKET = os.getenv('MINIO_BUCKET')
-MINIO_ENDPOINT = os.getenv('MINIO_ENDPOINT')
-MINIO_ACCESS_KEY = os.getenv('MINIO_ACCESS_KEY')
-MINIO_SECRET_KEY = os.getenv('MINIO_SECRET_KEY')
-MINIO_REGION = os.getenv('MINIO_REGION')
-MINIO_USE_VIRTUAL_HOST = os.getenv('MINIO_USE_VIRTUAL_HOST', 'false').lower() == 'true'
-MINIO_USE_SSL = os.getenv('MINIO_USE_SSL', 'false').lower() == 'true'
-
-# Milvus 配置
-MILVUS_HOST = os.getenv("MILVUS_HOST")
-MILVUS_PORT = os.getenv("MILVUS_PORT")
-MILVUS_USER = os.getenv("MILVUS_USER")
-MILVUS_PASSWORD = os.getenv("MILVUS_PASSWORD")
-MILVUS_DATABASE = os.getenv("MILVUS_DATABASE")
-MILVUS_COLLECTION = os.getenv("MILVUS_COLLECTION")
-MILVUS_INDEX_NAME = os.getenv("MILVUS_INDEX_NAME")
-
-
+    if _bucket_name is None or _milvus_collection_name is None:
+        mode = (Config.NODE_PARSER_MODE or "default").lower()
+        if mode == "hierarchical":
+            _bucket_name = Config.MINIO_BUCKET_HIER
+            _milvus_collection_name = Config.MILVUS_COLLECTION_HIER
+        else:
+            _bucket_name = Config.MINIO_BUCKET
+            _milvus_collection_name = Config.MILVUS_COLLECTION
 
 
 app = Flask(__name__)
-app.secret_key = os.getenv('FLASK_SECRET_KEY', 'default-secret-key')
+app.secret_key = Config.FLASK_SECRET_KEY
 
 
 @app.before_request
@@ -57,15 +47,15 @@ def _get_minio_client() -> Minio:
         retries=False,
     )
     client = Minio(
-        endpoint=MINIO_ENDPOINT,
-        access_key=MINIO_ACCESS_KEY,
-        secret_key=MINIO_SECRET_KEY,
-        secure=MINIO_USE_SSL,
-        region=MINIO_REGION,
+        endpoint=Config.MINIO_ENDPOINT,
+        access_key=Config.MINIO_ACCESS_KEY,
+        secret_key=Config.MINIO_SECRET_KEY,
+        secure=Config.MINIO_USE_SSL,
+        region=Config.MINIO_REGION,
         http_client=http_client,
     )
 
-    if MINIO_USE_VIRTUAL_HOST:
+    if Config.MINIO_USE_VIRTUAL_HOST:
         client.enable_virtual_style_endpoint()
 
     app.logger.info('minio初始化完成...')
@@ -77,9 +67,9 @@ minio_client = _get_minio_client()
 
 # 初始化 Milvus API
 milvus_client = MilvusClient(
-    uri=f"http://{MILVUS_HOST}:{MILVUS_PORT}",
-    token=f"{MILVUS_USER}:{MILVUS_PASSWORD}",
-    db_name=MILVUS_DATABASE
+    uri=f"http://{Config.MILVUS_HOST}:{Config.MILVUS_PORT}",
+    token=f"{Config.MILVUS_USER}:{Config.MILVUS_PASSWORD}",
+    db_name=Config.MILVUS_DATABASE
 )
 
 
@@ -140,7 +130,7 @@ def login():
         username = request.form['username']
         password = request.form['password']
 
-        if username == ADMIN_USERNAME and password == ADMIN_PASSWORD:
+        if username == Config.ADMIN_USERNAME and password == Config.ADMIN_PASSWORD:
             session['username'] = username
             flash('登录成功！', 'success')
             return redirect(url_for('file_browser'))
@@ -186,15 +176,16 @@ def api_files():
     path = request.args.get('path', '')
 
     try:
+        logger.info(f"bucket_name:{_bucket_name}")
         # 测试 MinIO 连接
-        if not minio_client.bucket_exists(MINIO_BUCKET):
-            return jsonify({'error': f'桶 "{MINIO_BUCKET}" 不存在，请检查配置'}), 500
+        if not minio_client.bucket_exists(_bucket_name):
+            return jsonify({'error': f'桶 "{_bucket_name}" 不存在，请检查配置'}), 500
 
         # 获取 Minio 中的文件列表
         # 构建搜索前缀
         search_prefix = path if path == '' else (path if path.endswith('/') else path + '/')
 
-        objects = minio_client.list_objects(MINIO_BUCKET, prefix=search_prefix, recursive=False)
+        objects = minio_client.list_objects(_bucket_name, prefix=search_prefix, recursive=False)
 
         files = []
         folders = set()
@@ -241,11 +232,12 @@ def api_files():
 
         return jsonify({'files': files})
     except Exception as e:
-        app.logger.error(f"获取文件列表失败: {str(e)}")
+        # app.logger.error(f"获取文件列表失败: {str(e)}")
+        logger.exception("获取文件列表失败")
         if "SignatureDoesNotMatch" in str(e):
             return jsonify({'error': 'MinIO 认证失败，请检查 ACCESS_KEY 和 SECRET_KEY 配置'}), 500
         elif any(k in str(e) for k in ("Connection", "timed out", "Timeout", "MaxRetry")):
-            return jsonify({'error': f'无法连接到 MinIO 服务器 ({MINIO_ENDPOINT})，请检查网络和地址配置'}), 500
+            return jsonify({'error': f'无法连接到 MinIO 服务器 ({Config.MINIO_ENDPOINT})，请检查网络和地址配置'}), 500
         else:
             return jsonify({'error': f'获取文件列表失败: {str(e)}'}), 500
 
@@ -255,6 +247,7 @@ def api_files():
 def file_detail(file_path):
     """文件详情页面"""
     return render_template('file_detail.html', file_path=file_path)
+
 
 # 获取文件详情 API
 @app.route('/api/file/<path:file_path>')
@@ -274,7 +267,7 @@ def api_file_detail(file_path):
         app.logger.debug(f"解码后路径: {decoded_path}")
         # 从 Minio 获取文件基本信息
         try:
-            file_stat = minio_client.stat_object(MINIO_BUCKET, file_path)
+            file_stat = minio_client.stat_object(_bucket_name, file_path)
 
             file_info = {
                 'doc_name': os.path.basename(file_path),
@@ -297,12 +290,12 @@ def api_file_detail(file_path):
 
         # 从 Milvus 查询文件索引信息
         try:
-            file_path = f"{MINIO_BUCKET}/{file_path}"
-            milvus_client.load_collection(collection_name=MILVUS_COLLECTION)
+            file_path = f"{_bucket_name}/{file_path}"
+            milvus_client.load_collection(collection_name=_milvus_collection_name)
             filter_expr = f'file_path == "{file_path}"'
 
             results = milvus_client.query(
-                collection_name=MILVUS_COLLECTION,
+                collection_name=_milvus_collection_name,
                 filter=filter_expr,
                 # output_fields=["doc_name", "doc_path_name", "doc_type", "doc_md5", "doc_length", "content", "embedding_model"],
                 output_fields=["id", "doc_id", "text", "file_path", "doc_md5", 'file_type', 'file_size'],
@@ -348,7 +341,7 @@ def api_download_file(file_path):
 
         # 检查文件是否存在
         try:
-            file_stat = minio_client.stat_object(MINIO_BUCKET, file_path)
+            file_stat = minio_client.stat_object(_bucket_name, file_path)
         except Exception as e:
             if "NoSuchKey" in str(e) or "not found" in str(e).lower():
                 return jsonify({'error': f'文件不存在: {file_path}'}), 404
@@ -360,7 +353,7 @@ def api_download_file(file_path):
         import io
 
         try:
-            response = minio_client.get_object(MINIO_BUCKET, file_path)
+            response = minio_client.get_object(_bucket_name, file_path)
             file_data = response.data
 
             # 获取文件名
@@ -413,7 +406,7 @@ def api_delete_file(file_path):
 
         # 检查文件是否存在
         try:
-            file_stat = minio_client.stat_object(MINIO_BUCKET, file_path)
+            file_stat = minio_client.stat_object(_bucket_name, file_path)
             file_name = os.path.basename(file_path)
         except Exception as e:
             if "NoSuchKey" in str(e) or "not found" in str(e).lower():
@@ -423,35 +416,8 @@ def api_delete_file(file_path):
 
         # 从 MinIO 删除文件
         try:
-            minio_client.remove_object(MINIO_BUCKET, file_path)
+            minio_client.remove_object(_bucket_name, file_path)
             app.logger.info(f"minio文件删除成功: {file_path}")
-
-            # 如果文件在 Milvus 中有索引，也删除索引记录
-            # try:
-            #     milvus_client.load_collection(collection_name=MILVUS_COLLECTION)
-            #     filter_expr = f'file_path == "{file_path}"'
-            #
-            #     # 查询是否存在索引记录
-            #     results = milvus_client.query(
-            #         collection_name=MILVUS_COLLECTION,
-            #         filter=filter_expr,
-            #         output_fields=["id"],
-            #         limit=1000
-            #     )
-            #
-            #     app.logger.info(f"已查到文件：{results}")
-            #
-            #     if results:
-            #         # 删除 Milvus 中的记录
-            #         ids_to_delete = [result['id'] for result in results]
-            #         milvus_client.delete(
-            #             collection_name=MILVUS_COLLECTION,
-            #             filter=f'id in {ids_to_delete}'
-            #         )
-            #         app.logger.info(f"已删除 Milvus 中的 {len(ids_to_delete)} 条记录")
-            #
-            # except Exception as e:
-            #     app.logger.warning(f"删除 Milvus 索引时出错 (文件已删除): {str(e)}")
 
             return jsonify({
                 'success': True,
@@ -500,7 +466,7 @@ def api_create_directory():
 
         # 检查目录是否已存在
         try:
-            minio_client.stat_object(MINIO_BUCKET, full_path)
+            minio_client.stat_object(_bucket_name, full_path)
             return jsonify({'success': False, 'error': '目录已存在'}), 400
         except Exception:
             # 目录不存在，可以创建
@@ -509,7 +475,7 @@ def api_create_directory():
         # 创建目录（通过上传一个空对象）
         from io import BytesIO
         minio_client.put_object(
-            MINIO_BUCKET,
+            _bucket_name,
             full_path,
             BytesIO(b''),
             0,
@@ -547,12 +513,12 @@ def api_delete_directory():
 
         # 检查目录是否存在
         try:
-            minio_client.stat_object(MINIO_BUCKET, dir_path)
+            minio_client.stat_object(_bucket_name, dir_path)
         except Exception:
             return jsonify({'success': False, 'error': '目录不存在'}), 404
 
         # 检查目录是否为空（不包含任何文件或子目录）
-        objects = list(minio_client.list_objects(MINIO_BUCKET, prefix=dir_path, recursive=True))
+        objects = list(minio_client.list_objects(_bucket_name, prefix=dir_path, recursive=True))
 
         # 过滤掉目录本身
         content_objects = [obj for obj in objects if obj.object_name != dir_path]
@@ -561,7 +527,7 @@ def api_delete_directory():
             return jsonify({'success': False, 'error': '目录不为空，无法删除'}), 400
 
         # 删除目录
-        minio_client.remove_object(MINIO_BUCKET, dir_path)
+        minio_client.remove_object(_bucket_name, dir_path)
 
         app.logger.info(f"目录删除成功: {dir_path}")
         return jsonify({'success': True, 'message': '目录删除成功'})
@@ -569,6 +535,7 @@ def api_delete_directory():
     except Exception as e:
         app.logger.error(f"删除目录失败: {str(e)}")
         return jsonify({'success': False, 'error': f'删除目录失败: {str(e)}'}), 500
+
 
 # 上传文件 API
 @app.route('/api/upload', methods=['POST'])
@@ -605,7 +572,7 @@ def api_upload_files():
 
                 # 检查文件是否已存在
                 try:
-                    minio_client.stat_object(MINIO_BUCKET, object_name)
+                    minio_client.stat_object(_bucket_name, object_name)
                     failed_files.append({
                         'filename': file.filename,
                         'error': '文件已存在'
@@ -632,7 +599,7 @@ def api_upload_files():
                 # 重置文件指针并上传
                 file.seek(0)
                 minio_client.put_object(
-                    MINIO_BUCKET,
+                    _bucket_name,
                     object_name,
                     file,
                     file_size,
@@ -677,9 +644,10 @@ def api_upload_files():
 
 if __name__ == '__main__':
 
+    _get_minio_buck_name()
     # 获取主机和端口配置
-    host = os.getenv('FLASK_HOST')
-    port = int(os.getenv('FLASK_PORT'))
+    host = Config.FLASK_HOST
+    port = Config.FLASK_PORT
 
 
     print("=" * 60)
@@ -690,7 +658,7 @@ if __name__ == '__main__':
     app.run(
         host=host,
         port=port,
-        debug=os.getenv('FLASK_DEBUG', 'False').lower() == 'true',
+        debug=Config.FLASK_DEBUG,
         threaded=True,
         processes=1
     ) 

@@ -13,7 +13,7 @@ from flask import (
 )
 
 from auth.routes import login_required
-from core.llama_rag import build_chat_engine, sources_from_nodes
+from core.base_retriever import sources_from_nodes, get_chat_engine
 from logger.logger import logger
 
 chat_bp = Blueprint('chat', __name__)
@@ -49,7 +49,7 @@ def chat():
 
     # 构建对话引擎
     try:
-        engine = build_chat_engine(username, app=current_app._get_current_object())
+        engine = get_chat_engine(username, app=current_app._get_current_object())
     except Exception as e:
         logger.error(f"构建对话引擎失败: {e}")
         return jsonify({'error': f'初始化失败: {str(e)}'}), 500

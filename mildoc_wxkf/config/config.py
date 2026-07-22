@@ -37,6 +37,8 @@ class Config:
     MINIO_ACCESS_KEY: str = os.getenv("MINIO_ACCESS_KEY")
     MINIO_SECRET_KEY: str = os.getenv("MINIO_SECRET_KEY")
     MINIO_BUCKET: str = os.getenv("MINIO_BUCKET")
+    # 给层次解析使用
+    MINIO_BUCKET_HIER: str = os.getenv("MINIO_BUCKET_HIER")
     MINIO_REGION: str = os.getenv("MINIO_REGION")
     MINIO_USE_VIRTUAL_HOST: bool = os.getenv('MINIO_USE_VIRTUAL_HOST', 'false').lower() == 'true'
     MINIO_USE_SSL: bool = os.getenv("MINIO_USE_SSL", 'false').lower() == 'true'
@@ -49,6 +51,9 @@ class Config:
     MILVUS_DATABASE: str = os.getenv("MILVUS_DATABASE")
     MILVUS_COLLECTION: str = os.getenv("MILVUS_COLLECTION")
     MILVUS_INDEX_NAME: str = os.getenv("MILVUS_INDEX_NAME")
+    # 以下两个配置给层次解析使用
+    MILVUS_COLLECTION_HIER: str = os.getenv("MILVUS_COLLECTION_HIER")
+    MILVUS_INDEX_NAME_HIER: str = os.getenv("MILVUS_INDEX_NAME_HIER")
     MILVUS_VECTOR_DIM: int = int(os.getenv("MILVUS_VECTOR_DIM"))
 
     # ===================== LLM（生成回答） =====================
@@ -86,3 +91,13 @@ class Config:
     TOP_K: int = int(os.getenv("TOP_K", "20"))
     # 重排序后返回的片段数
     TOP_N: int = int(os.getenv("TOP_N", "10"))
+
+    # ===================== 检索方式（A/B 对比用） =====================
+    # default      = 原混合检索（VectorStoreIndex.as_retriever + hybrid）
+    # hierarchical = AutoMergingRetriever（配合 mildoc_index 侧 NODE_PARSER_MODE=hierarchical 的层级节点）
+    RETRIEVER_MODE: str = os.getenv("RETRIEVER_MODE", "default")
+    # 层次解析写入的 Redis docstore / index store 命名空间
+    # 必须与 mildoc_index 完全一致，
+    # AutoMergingRetriever 才能通过节点关系找到父节点并合并。
+    REDIS_DOC_NAME_SPACE_HIER: str = os.getenv("REDIS_DOC_NAME_SPACE_HIER")
+    REDIS_INDEX_NAME_SPACE_HIER: str = os.getenv("REDIS_INDEX_NAME_SPACE_HIER")

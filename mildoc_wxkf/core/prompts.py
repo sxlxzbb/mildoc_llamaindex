@@ -1,6 +1,6 @@
 """客服系统提示词（集中存放，避免循环导入）
 
-供 core/llama_rag.py 的响应合成器与 chat/service.py 复用。
+供 core/base_retriever.py 的响应合成器与 chat/service.py 复用。
 """
 
 SYSTEM_PROMPT =  """

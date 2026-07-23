@@ -37,9 +37,9 @@ from llama_index.core.ingestion import IngestionPipeline, DocstoreStrategy
 
 from config.config import Config
 from logger.logging import setup_logging
-from parse.base_ingestion import BaseDocumentIngestionPipeline
+from ingestion.base_ingestion import BaseDocumentIngestionPipeline
 # 复用原始管道类：当模式为 default 时，工厂函数直接返回它，保证原逻辑零改动。
-from parse.ingestion_pipeline import DocumentIngestionPipeline
+from ingestion.ingestion_pipeline import DocumentIngestionPipeline
 
 logger = setup_logging()
 

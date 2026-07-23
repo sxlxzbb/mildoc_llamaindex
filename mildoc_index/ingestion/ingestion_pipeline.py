@@ -5,7 +5,7 @@ from llama_index.core.ingestion import IngestionPipeline, DocstoreStrategy
 
 from config.config import Config
 from logger.logging import setup_logging
-from parse.base_ingestion import BaseDocumentIngestionPipeline
+from ingestion.base_ingestion import BaseDocumentIngestionPipeline
 
 logger = setup_logging()
 

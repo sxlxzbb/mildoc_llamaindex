@@ -10,8 +10,8 @@ from minio import Minio
 from config.config import Config
 from logger.logging import setup_logging
 from milvus.milvus_api import MilvusApi
-from parse.hierarchical_ingestion import HierarchicalDocumentIngestionPipeline
-from parse.ingestion_pipeline import DocumentIngestionPipeline
+from ingestion.hierarchical_ingestion import HierarchicalDocumentIngestionPipeline
+from ingestion.ingestion_pipeline import DocumentIngestionPipeline
 from parse.simple_object_parser import SimpleObjectParser
 
 logger = setup_logging()

@@ -109,6 +109,21 @@ class BaseDocumentIngestionPipeline:
 
         # llama-index-vector-stores-milvus >= 1.0 改为参数式建 schema，
         # 不再接收 schema=/text_field=/vector_field= 参数，由 store 自动构建。
+
+        # —— Milvus 索引 / 检索调优参数 ——
+        # index_type / nlist / metric_type 属「建索引时」参数，仅集合首次创建时生效；
+        #   若集合已存在（overwrite=False），改这些不会重建索引，必须删集合重摄取。
+        # nprobe 属「查询时」参数，立即生效、无需重建。
+        # 默认值（不配 .env 时）：FLAT + nlist=1024 + IP + nprobe=10，等价当前行为。
+        # 推荐：embedding=text-embedding-v4 时把 metric_type 改成 COSINE；
+        #       数据量大时把 index_type 改成 IVF_FLAT 并配合 nlist（经验 ≈ sqrt(N)）。
+        dense_index_config = {"index_type": Config.MILVUS_INDEX_TYPE.upper()}
+        if Config.MILVUS_INDEX_TYPE.upper().startswith("IVF"):
+            # nlist 仅 IVF_* 系列生效；FLAT 传 nlist 会被 Milvus 拒绝，故按需添加。
+            dense_index_config["nlist"] = Config.MILVUS_NLIST
+        # nprobe参数仅在检索侧使用，摄取侧不用
+        # dense_search_config = {"nprobe": Config.MILVUS_NPROBE}
+
         self.milvus_vector_store = MilvusVectorStore(
             uri=f"http://{Config.MILVUS_HOST}:{Config.MILVUS_PORT}",
             token=None,  # 用的是 user/password 认证，所以 token 留空
@@ -133,6 +148,10 @@ class BaseDocumentIngestionPipeline:
             scalar_field_types=milvus_config.SCALAR_FIELD_TYPES,
             # 如果集合已存在，不覆盖
             overwrite=False,   # 设为 False 防止误删已有数据
+            # ===== Milvus 索引 / 检索调优（见上方 dense_index_config / dense_search_config）=====
+            index_config=dense_index_config,               # 建索引参数：index_type（+ IVF 时的 nlist）
+            similarity_metric=Config.MILVUS_METRIC_TYPE.upper(),  # 建索引 + 查询共用的度量
+            # search_config=dense_search_config,             # 查询参数：nprobe（IVF 时生效） 仅检索侧使用，这儿是摄取侧，顾不使用
         )
 
         # 单独持有 cache 引用，供删除文档时清理 ingestion cache 使用

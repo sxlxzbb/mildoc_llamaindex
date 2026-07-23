@@ -197,6 +197,20 @@ class BaseRetrievalPipeline:
     def _get_vector_store(self) -> MilvusVectorStore:
         """获取 MilvusVectorStore 单例（复用已有集合，overwrite=False）。"""
         if self._vector_store is None:
+            # —— Milvus 索引 / 检索调优参数 ——
+            # index_type / nlist / metric_type 属「建索引时」参数，仅集合首次创建时生效；
+            #   若集合已存在（overwrite=False），改这些不会重建索引，必须删集合重摄取。
+            # nprobe 属「查询时」参数，立即生效、无需重建。
+            # 默认值（不配 .env 时）：FLAT + nlist=1024 + IP + nprobe=10，等价当前行为。
+            # 推荐：embedding=text-embedding-v4 时把 metric_type 改成 COSINE；
+            #       数据量大时把 index_type 改成 IVF_FLAT 并配合 nlist（经验 ≈ sqrt(N)）。
+            # 检索侧只配nprobe就可以了，index_type和nlist可以不关注（在摄取侧关注）
+            # dense_index_config = {"index_type": Config.MILVUS_INDEX_TYPE.upper()}
+            # if Config.MILVUS_INDEX_TYPE.upper().startswith("IVF"):
+            #     # nlist 仅 IVF_* 系列生效；FLAT 传 nlist 会被 Milvus 拒绝，故按需添加。
+            #     dense_index_config["nlist"] = Config.MILVUS_NLIST
+            dense_search_config = {"nprobe": Config.MILVUS_NPROBE}
+
             self._vector_store = MilvusVectorStore(
                 uri=f"http://{Config.MILVUS_HOST}:{Config.MILVUS_PORT}",
                 token=None,  # 使用 user/password 认证
@@ -219,6 +233,10 @@ class BaseRetrievalPipeline:
                 scalar_field_names=[DOC_PATH_FIELD],
                 scalar_field_types=[DataType.VARCHAR],
                 overwrite=False,  # 不覆盖已有数据
+                # ===== Milvus 索引 / 检索调优（见上方 dense_index_config / dense_search_config）=====
+                # index_config=dense_index_config,               # 建索引参数：index_type（+ IVF 时的 nlist）
+                similarity_metric=Config.MILVUS_METRIC_TYPE.upper(),  # 建索引 + 查询共用的度量
+                search_config=dense_search_config,             # 查询参数：nprobe（IVF 时生效）
             )
             logger.info(f"MilvusVectorStore 初始化完成（集合：{self.collection}）")
         return self._vector_store

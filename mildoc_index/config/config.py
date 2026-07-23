@@ -33,6 +33,20 @@ class Config:
     MILVUS_INDEX_NAME_HIER: str = os.getenv("MILVUS_INDEX_NAME_HIER")
 
 
+    # ===================== Milvus 索引 / 检索调优 =====================
+    # 均有默认值，不配 .env 也能跑（等价于当前行为）。
+    # index_type / nlist / metric_type 属「建索引时」参数，仅集合首次创建时生效；
+    #   若集合已存在（overwrite=False），改了不会重建索引，必须删集合重摄取。
+    # nprobe 属「查询时」参数，立即生效、无需重建。
+    # 推荐：embedding=text-embedding-v4 时把 metric_type 改成 COSINE；
+    #       数据量大时把 index_type 改成 IVF_FLAT 并配合 nlist（经验 ≈ sqrt(N)）。
+    MILVUS_INDEX_TYPE: str = os.getenv("MILVUS_INDEX_TYPE", "FLAT")
+    MILVUS_NLIST: int = int(os.getenv("MILVUS_NLIST", "1024"))
+    MILVUS_METRIC_TYPE: str = os.getenv("MILVUS_METRIC_TYPE", "IP")
+    # 该参数仅在检索侧使用，摄取侧可以不配
+    MILVUS_NPROBE: int = int(os.getenv("MILVUS_NPROBE", "10"))
+
+
     # llm
     LLM_MODEL_NAME: str = os.getenv("LLM_MODEL_NAME")
     LLM_API_KEY: str = os.getenv("LLM_API_KEY")

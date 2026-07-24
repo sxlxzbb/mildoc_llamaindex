@@ -22,7 +22,24 @@
 
 ---
 
-## 二、技术架构
+## 二、系统支持的文档格式
+
+系统通过 `mildoc_index` 的 `SimpleObjectParser` 统一解析，按对象存储返回的 `Content-Type` 自动分派到对应解析器。当前支持以下 7 种格式：
+
+| 格式 | 解析入口 | 说明 |
+|---|---|---|
+| `.pdf` | `PdfParser` | 提取正文文本；复杂排版 / 扫描件可能丢失版式 |
+| `.doc` / `.docx` | `OfficeParser` | Word 文档，转文本后走通用切片 |
+| `.xlsx` | `OfficeParser` | Excel，按工作表 / 单元格抽取为文本 |
+| `.pptx` | `OfficeParser` | PowerPoint，按幻灯片抽取为文本 |
+| `.md` | `MarkdownParser` | 保留 Markdown 标题层级后再切片 |
+| `.txt` | `TextParser` | 纯文本，直接切片 |
+
+> 解析入口对单文件大小有限制（≤ 512MB），空文件与超大文件会被跳过；未被识别的 `Content-Type` 不会报错，仅记录日志并跳过，保证摄取管线稳定。
+
+---
+
+## 三、技术架构
 
 整体由三个独立服务 + 一套基础设施组成：
 
@@ -78,7 +95,7 @@ flowchart LR
 
 ---
 
-## 三、功能模块
+## 四、功能模块
 
 ```mermaid
 flowchart TB
@@ -127,7 +144,101 @@ flowchart TB
 
 ---
 
-## 四、项目亮点
+## 五、文档摄取详细过程
+
+文档摄取由 `mildoc_index` 完成，整体为「事件触发 → 解析 → 切片 → 向量化 → 落库」。系统支持两种切片模式：**默认摄取（default）** 与 **层次结构摄取（hierarchical）**，二者通过 `.env` 的 `NODE_PARSER_MODE` 切换，且各自使用独立的 Milvus 集合与 Redis 命名空间，互不干扰。
+
+### 5.1 默认摄取（default）
+
+- 文本类（`.txt/.pdf/.doc/.docx/.xlsx/.pptx`）→ `SentenceSplitter` 按 `chunk_size` 切块、`chunk_overlap` 重叠；
+- Markdown 类（`.md`）→ 先 `MarkdownNodeParser` 保留标题层级，再用 `SentenceSplitter` 按段落细化；
+- 两种都接 `TitleExtractor` 抽取标题，然后**全部节点一次性 embedding**，写入 Milvus（稠密 + 稀疏 BM25 双索引）与 Redis docstore / index store / ingestion cache。
+
+### 5.2 层次结构摄取（hierarchical）
+
+使用 `HierarchicalNodeParser` 把文档切成「父节点（大块）→ 子节点（小块）」层级：
+
+- 文本类：按配置的 `HIERARCHICAL_CHUNK_SIZES` 逐层用 `SentenceSplitter` 切出「大块 → 小块」父子层级；
+- Markdown 类：顶层用 `MarkdownNodeParser` 保留标题层级，更深层再用 `SentenceSplitter` 继续切分；
+- **关键优化**：同一次解析产出的「父 + 子」节点只写 docstore（保留父子关系供检索合并），**仅叶子节点**单独 embedding 后写入 Milvus——父节点不进向量库，省空间也避免稀释精度。
+
+### 5.3 删除 / 重传保护
+
+文档删除或重传时，先 `load_collection` 确保集合在内存，再 `delete`（Milvus 按 doc_id 删向量）→ `delete_ref_doc` **级联清理** docstore 中父 / 子节点（仅 `delete_document` 会漏删子节点，导致孤儿节点）→ 清空 ingestion cache。重传时若 doc_id 已存在会先执行上述清理，避免残留。
+
+### 5.4 摄取流程图
+
+```mermaid
+flowchart TB
+    E[MinIO 事件<br/>ObjectCreated / ObjectRemoved<br/>或 full-refresh]
+    --> DL[下载对象到临时目录<br/>校验大小 ≤512MB / 非空]
+    --> SEL{按 Content-Type<br/>选择解析器}
+    SEL -->|pdf| P1[PdfParser]
+    SEL -->|doc/docx/xlsx/pptx| P2[OfficeParser]
+    SEL -->|md| P3[MarkdownParser]
+    SEL -->|txt| P4[TextParser]
+    SEL -->|未识别| SKIP[跳过并记录日志]
+    P1 --> DOC[解析为 LlamaIndex Document]
+    P2 --> DOC
+    P3 --> DOC
+    P4 --> DOC
+    DOC --> MODE{NODE_PARSER_MODE}
+
+    MODE -->|default| D1[SentenceSplitter / MarkdownNodeParser]
+    D1 --> D2[TitleExtractor 抽取标题]
+    D2 --> D3[全部节点 embedding<br/>稠密 + 稀疏]
+    D3 --> D4[(写入 Milvus 双索引<br/>+ Redis docstore/index store/cache)]
+
+    MODE -->|hierarchical| H1[HierarchicalNodeParser<br/>生成 父-子 层级节点]
+    H1 --> H2[全部节点写 docstore<br/>保留父子关系]
+    H2 --> H3[筛出 leaf 叶子节点<br/>单独 embedding]
+    H3 --> H4[(仅 leaf 写 Milvus<br/>父节点不进向量库)]
+
+    RM[ObjectRemoved / 重传] --> DEL[load_collection<br/>→ Milvus delete<br/>→ delete_ref_doc 级联清理<br/>→ 清 ingestion cache]
+```
+
+---
+
+## 六、检索实现详细过程
+
+检索由 `mildoc_wxkf` 完成，整体为「问题压缩（多轮）→ 混合召回 → 融合 → 重排 → 流式合成 → 抽取来源 → 记忆落库」。系统支持两种检索模式，与摄取侧模式一一对应：
+
+### 6.1 默认混合检索（default）
+
+- 多轮对话时，`CondenseQuestionChatEngine` 先用历史把追问**压缩成独立问题**；
+- query 同时做**稠密 embedding** 与 **BM25 稀疏** 编码，向 Milvus 发两路 `AnnSearchRequest`；
+- 两路结果用 **`RRFRanker`** 按 reciprocal rank 融合，互补语义召回与关键词精确匹配；
+- `RerankPostprocessor` 调用百炼 **Rerank** 对融合结果精排取 `TOP_N`；
+- `get_response_synthesizer`（COMPACT 模式 + 流式）基于精排分片合成答案，并按 `file_path` 去重抽取**引用来源**。
+
+### 6.2 层次结构检索（hierarchical）
+
+在默认混合检索之上再套 **`AutoMergingRetriever`**：混合检索先召回若干**叶子节点**，若同一父节点的叶子召回比例超过阈值（默认 0.5），自动**合并为父节点**的完整文本，用更连贯的上下文合成答案，提升长文档问答精度。该模式依赖 docstore 中的父子关系，故检索侧命名空间必须与 hierarchical 摄取侧完全一致。
+
+### 6.3 检索流程图
+
+```mermaid
+flowchart TB
+    U[用户提问 SSE] --> C{是否多轮}
+    C -->|是| Q[CondenseQuestionChatEngine<br/>用历史压缩为独立问题]
+    C -->|否| Q2[直接使用原问题]
+    Q --> EMB[query 编码<br/>稠密 embedding + BM25 稀疏]
+    Q2 --> EMB
+    EMB --> MIL[Milvus 双路 AnnSearchRequest<br/>稠密向量 + 稀疏 BM25]
+    MIL --> FUS[RRFRanker 融合排序]
+    FUS --> AM{RETRIEVER_MODE}
+    AM -->|default| R1[RerankPostprocessor<br/>百炼精排 TOP_N]
+    AM -->|hierarchical| AMM[AutoMergingRetriever<br/>叶子召回比例>0.5 合并父节点]
+    AMM --> R1
+    R1 --> SYN[响应合成器 COMPACT + 流式]
+    SYN --> SRC[按 file_path 去重<br/>抽取引用来源]
+    SRC --> MEM[(写入对话记忆<br/>Redis + MySQL)]
+    SYN --> ANS[流式返回答案 + 来源]
+```
+
+---
+
+## 七、项目亮点
 
 1. **稠密 + 稀疏混合检索**：语义向量召回解决「换个说法也能懂」，BM25 关键词召回解决「专有名词 / 精确匹配」，两路 `AnnSearchRequest` 经 `RRFRanker` 融合。
 2. **层次化解析可选**：`NODE_PARSER_MODE=hierarchical` 时启用 `HierarchicalNodeParser`，保留「文档 → 章节 → 段落」层级，利于长文档定位。两种模式各自独立桶 / 集合，互不干扰。
@@ -139,7 +250,7 @@ flowchart TB
 
 ---
 
-## 五、高并发瓶颈分析
+## 八、高并发瓶颈分析
 
 > mildoc_admin 与 mildoc_index 主要供内部管理员使用、流量低，瓶颈不敏感；
 > **下面重点分析面向客户的 mildoc_wxkf**。
@@ -160,7 +271,7 @@ flowchart TB
 
 ---
 
-## 六、后续优化点
+## 九、后续优化点
 
 - **语义 / 答案缓存**：相同 / 相似问题直接命中，显著削减百炼调用与 Milvus 压力。
 - **多 worker 部署**：用 gunicorn 多进程替换单进程 Flask，消除 SSE 长连接对单进程的占用。
@@ -171,3 +282,68 @@ flowchart TB
 - **监控与指标**：采集检索耗时、命中率、外部 API 限流次数、流式首字延迟，驱动进一步调优。
 - **摄取并行**：通过 `IngestionPipeline.run(num_workers=N)` 把文档切片后的 embedding 并行起来（注意百炼 embedding 单请求上限 10 条，`embed_batch_size` 不可超过此值）。
 - **多租户 / 集合隔离**：按业务线隔离 Milvus 集合与 Redis 命名空间。
+
+---
+
+## 十、项目扩展点
+
+下列方向基于现有架构（LlamaIndex + 百炼 + Milvus + Redis + MinIO）做了接口预留或仅需在某一层替换 / 新增组件即可落地，可作为下一步演进路线参考。
+
+```mermaid
+flowchart TB
+    subgraph 数据源扩展["① 数据源扩展"]
+        S1[S3 / 阿里云OSS / 华为OBS]
+        S2[数据库 / 业务API]
+        S3[网页爬虫 / 站点地图]
+        S4[消息队列 / 实时CDC]
+    end
+
+    subgraph 解析扩展["② 解析能力扩展"]
+        P1[更多格式<br/>PPT / Excel / 图片OCR / 音视频转写]
+        P2[表格 / 公式 / 图表结构化]
+        P3[HTML / 富文本深度清洗]
+    end
+
+    subgraph 模型扩展["③ 模型与供应商扩展"]
+        M1[多供应商混用<br/>embedding / LLM / rerank]
+        M2[本地模型<br/>vLLM / Ollama / bge-reranker]
+        M3[多语言 / 跨语言嵌入]
+    end
+
+    subgraph 检索扩展["④ 检索策略扩展"]
+        R1[GraphRAG / 知识图谱]
+        R2[Agentic RAG<br/>检索决策 + 工具调用]
+        R3[HyDE / 多查询改写]
+        R4[父子文档 / 元数据过滤检索]
+    end
+
+    subgraph 通道扩展["⑤ 接入渠道扩展"]
+        C1[企业微信 / 钉钉 / 飞书]
+        C2[Slack / Teams / Webhook]
+        C3[开放 API / SDK 供第三方集成]
+    end
+
+    subgraph 智能扩展["⑥ 智能与运营扩展"]
+        E1[用户反馈闭环<br/>点赞/点踩 → 微调 rerank]
+        E2[RAG 自动评估<br/>Ragas / 召回率 / 相关性]
+        E3[运营分析后台<br/>热点 / 未命中问题]
+        E4[细粒度权限<br/>按角色过滤检索范围]
+    end
+```
+
+### 扩展方向一览
+
+| # | 方向 | 现状 / 切入点 | 扩展方式 |
+|---|---|---|---|
+| 1 | **数据源接入** | 仅 MinIO 事件触发 | 新增数据源适配器即可（如 S3/OSS 事件、数据库 CDC、网页爬虫），复用现有 `SimpleObjectParser → IngestionPipeline` 链路 |
+| 2 | **解析 / 文件格式** | 统一 `SimpleObjectParser` | 扩展解析器支持 PPT/Excel/图片 OCR/音视频转写；增加表格、公式、图表的结构化抽取 |
+| 3 | **模型与供应商** | 全部走百炼兼容端点 | 抽象 `BaseEmbedding / BaseLLM / 重排` 接口，可混用不同厂商，或切换本地模型（vLLM、Ollama、bge-reranker）降本提速 |
+| 4 | **检索策略升级** | 稠密 + 稀疏 + Rerank | 引入 GraphRAG、Agentic RAG（检索决策 + 工具调用）、HyDE、多查询改写；增加父子文档检索与基于元数据的过滤检索 |
+| 5 | **接入渠道** | 微信客服 / 浏览器 | 复用 `chat` 层 RAG 链路，新增企业微信 / 钉钉 / 飞书 / Slack 等渠道适配；开放 API / SDK 供第三方集成 |
+| 6 | **反馈闭环与微调** | 仅记录对话记忆 | 收集用户对答案的点赞 / 点踩，反哺重排模型微调或检索权重调优 |
+| 7 | **评估体系** | 无自动评估 | 接入 Ragas 等框架，对召回率、答案相关性、忠实度做自动化评测，量化迭代效果 |
+| 8 | **运营分析后台** | 仅管理文档 | 统计热点问题、未命中 / 低置信度问题，指导文档补充与 Prompt 优化 |
+| 9 | **细粒度权限 / 租户** | 集合级隔离 | 在检索侧按用户角色 / 组织过滤 `file_path` 等元数据，实现「不同人看到不同文档范围」的权限隔离 |
+| 10 | **多语言 / 跨语言** | 中文为主 | 切换多语言 / 跨语言嵌入模型，支持中英混合或跨语言检索 |
+
+> 上述扩展大多**不破坏现有分层**：数据源层只需新增适配器、模型层只需替换接口实现、检索层只需叠加新策略、渠道层只需复用 `chat` 的 RAG 链路，因而整体演进成本可控。

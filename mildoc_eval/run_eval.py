@@ -164,7 +164,7 @@ def main():
     dataset_path = (
         Path(sys.argv[1]) if len(sys.argv) > 1 else (HERE / "datasets" / f"{data_set_name}")
     )
-    out_path = HERE / "eval_results.csv"
+    out_path = HERE / "eval_results.xlsx"
 
     records = load_dataset(dataset_path)
     if not records:
@@ -260,16 +260,66 @@ def main():
 
     combined = pd.concat(shard_dfs, ignore_index=True)
     print("\n===== 跨模型汇总（按分片大小加权均值）=====")
+    summary_rows = []
     for m in metrics:
         name = m.name
         if name in combined.columns:
-            print(f"  {name:18s}: {combined[name].mean():.4f}")
+            mean_val = combined[name].mean()
+            print(f"  {name:18s}: {mean_val:.4f}")
+            summary_rows.append({"指标": name, "加权均值": round(float(mean_val), 4)})
+    # 按裁判模型分别汇总（多模型轮询时有意义）
+    if len(judge_models) > 1 and "_judge_model" in combined.columns:
+        for model in judge_models:
+            sub = combined[combined["_judge_model"] == model]
+            if sub.empty:
+                continue
+            print(f"  [{model}]")
+            for m in metrics:
+                name = m.name
+                if name in sub.columns:
+                    print(f"    {name:18s}: {sub[name].mean():.4f}")
+
+    # ---- 保存为 xlsx（CSV 分隔符难用，改用 Excel 原生格式）----
+    # retrieved_contexts 是 list，直接写 Excel 会报错，先拼成可读文本。
+    if "retrieved_contexts" in combined.columns:
+        combined["retrieved_contexts"] = combined["retrieved_contexts"].apply(
+            lambda c: "\n\n----\n\n".join(c) if isinstance(c, (list, tuple)) else c
+        )
 
     try:
-        combined.to_csv(out_path, index=False)
-        print(f"\n已保存逐条明细（含 _judge_model 列）到: {out_path}")
+        from openpyxl import Workbook  # noqa: F401  确保引擎可用
+        summary_df = pd.DataFrame(summary_rows) if summary_rows else pd.DataFrame()
+        # 多模型时附上分模型汇总，方便对比
+        if len(judge_models) > 1 and "_judge_model" in combined.columns:
+            per_model = []
+            for model in judge_models:
+                sub = combined[combined["_judge_model"] == model]
+                if sub.empty:
+                    continue
+                row = {"裁判模型": model, "样本数": len(sub)}
+                for m in metrics:
+                    name = m.name
+                    if name in sub.columns:
+                        row[name] = round(float(sub[name].mean()), 4)
+                per_model.append(row)
+            if per_model:
+                summary_df = pd.concat(
+                    [summary_df, pd.DataFrame([{}]), pd.DataFrame(per_model)],
+                    ignore_index=True,
+                )
+        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+            combined.to_excel(writer, sheet_name="明细", index=False)
+            if not summary_df.empty:
+                summary_df.to_excel(writer, sheet_name="汇总", index=False)
+        print(f"\n已保存 Excel 报告（明细 + 汇总两个 sheet）到: {out_path}")
+    except ImportError:
+        # 没装 openpyxl 时优雅降级为 CSV，并提示安装
+        csv_path = out_path.with_suffix(".csv")
+        combined.to_csv(csv_path, index=False)
+        print(f"\n[提示] 未安装 openpyxl，已降级输出 CSV: {csv_path}")
+        print("        安装 xlsx 支持：pip install openpyxl")
     except Exception as e:  # 保存失败不影响结果展示
-        print(f"保存 CSV 失败（不影响结果）: {e}")
+        print(f"保存 Excel 失败（不影响结果）: {e}")
 
 
 if __name__ == "__main__":

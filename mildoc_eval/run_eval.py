@@ -45,7 +45,7 @@ load_dotenv(HERE / ".env", override=True)
 from config.config import Config  # noqa: E402  （import 顺序依赖上方 path/dotenv 设置）
 
 # ============ Ragas ============
-from ragas import EvaluationDataset, evaluate  # noqa: E402
+from ragas import EvaluationDataset, evaluate, RunConfig  # noqa: E402
 from ragas.metrics import (  # noqa: E402
     faithfulness,
     answer_relevancy,
@@ -54,7 +54,12 @@ from ragas.metrics import (  # noqa: E402
 )
 from ragas.llms import LangchainLLMWrapper  # noqa: E402
 from ragas.embeddings import LangchainEmbeddingsWrapper  # noqa: E402
-from langchain_openai import ChatOpenAI, OpenAIEmbeddings  # noqa: E402
+from langchain_openai import ChatOpenAI  # noqa: E402
+from langchain_core.embeddings import Embeddings  # noqa: E402
+try:  # 限流器：部分 langchain_core 版本路径不同，取不到则退化为不限流
+    from langchain_core.rate_limiters import SimpleRateLimiter
+except Exception:  # noqa: BLE001
+    SimpleRateLimiter = None
 
 
 # ============ 复用生产检索管线 ============
@@ -81,28 +86,55 @@ def run_one(pipeline, question: str):
 # ============ Ragas 模型 ============
 # 检索/生成仍走生产管线（Config，复用 mildoc_wxkf/.env 的生产模型）。
 # 评估裁判(judge)模型独立配置：读取 mildoc_eval/.env 的 JUDGE_MODELS（逗号分隔，多个模型按问题轮询）。
+# 向量化复用与生产索引【完全相同】的 LlamaIndex OpenAIEmbedding 客户端：
+#   1) 规避 LangChain OpenAIEmbeddings 走 OpenAI 兼容接口时，text-embedding-v4 报
+#      "contents is neither str nor list of str" 的 400；
+#   2) 保证评估与索引处于同一向量空间，answer_relevancy 的相似度才有意义。
+class _LlamaEmbeddingsAdapter(Embeddings):
+    """把 LlamaIndex 的 OpenAIEmbedding 适配成 LangChain Embeddings 接口，供 Ragas 使用。"""
+
+    def __init__(self, llama_model):
+        super().__init__()
+        self._model = llama_model
+
+    def embed_documents(self, texts):
+        return self._model.get_text_embedding_batch(list(texts))
+
+    def embed_query(self, text):
+        return self._model.get_text_embedding(text)
+
+
 def build_embeddings():
-    return LangchainEmbeddingsWrapper(
-        OpenAIEmbeddings(
-            model=Config.ENBEDDING_MODEL,
-            api_key=Config.OPENAI_API_KEY,       # 对应 .env 的 LLM_EMBEDDING_API_KEY
-            base_url=Config.OPENAI_BASE_URL,     # 对应 .env 的 LLM_EMBEDDING_BASE_URL
-            chunk_size=10,                        # 百炼单次 embedding 上限 10 条
-            dimensions=Config.MILVUS_VECTOR_DIM,
-        )
+    from llama_index.embeddings.openai import OpenAIEmbedding as LlamaOpenAIEmbedding
+    llama_emb = LlamaOpenAIEmbedding(
+        model_name=Config.ENBEDDING_MODEL,      # "text-embedding-v4"，与生产一致
+        dimensions=Config.MILVUS_VECTOR_DIM,    # 与 Milvus 维度对齐
+        api_key=Config.OPENAI_API_KEY,          # 对应 .env 的 LLM_EMBEDDING_API_KEY
+        api_base=Config.OPENAI_BASE_URL,        # 对应 .env 的 LLM_EMBEDDING_BASE_URL
+        embed_batch_size=10,                     # 百炼单次 embedding 上限 10 条
+        max_retries=3,                           # 吸收偶发超时
+        timeout=120,                            # 单次 embedding 上限 120s
     )
+    return LangchainEmbeddingsWrapper(_LlamaEmbeddingsAdapter(llama_emb))
 
 
 def build_judge_llm(model_name: str):
     """为单个评估裁判模型构建 LLM 包装（默认复用同一账户的 api_key / base_url）。"""
     api_key = os.getenv("JUDGE_API_KEY") or Config.LLM_API_KEY
     base_url = os.getenv("JUDGE_BASE_URL") or Config.LLM_BASE_URL
+    # 限流：免费额度模型 RPM 很低，Ragas 默认高并发会瞬间打满触发 429。
+    # 用 SimpleRateLimiter 把请求均匀化；速率由 JUDGE_RPS 调整（默认保守值）。
+    rps = float(os.getenv("JUDGE_RPS", "0.34"))
+    rate_limiter = SimpleRateLimiter(requests_per_second=rps) if SimpleRateLimiter else None
     return LangchainLLMWrapper(
         ChatOpenAI(
             model=model_name,
             api_key=api_key,
             base_url=base_url,
             temperature=0.0,
+            max_retries=5,      # 偶发 429/超时，指数退避重试
+            timeout=120,        # 单次调用上限 120s，避免无限挂起
+            rate_limiter=rate_limiter,
         )
     )
 
@@ -113,12 +145,13 @@ def get_judge_models() -> list:
     # 兜底：没配 JUDGE_MODELS 时退化为生产模型单例（行为与改动前一致）
     return models or [Config.LLM_MODEL_NAME]
 
+data_set_name = 'golden_set1.jsonl'
 
 # ============ 数据集加载 ============
 def load_dataset(path: Path) -> list:
     if not path.exists():
         raise SystemExit(
-            f"找不到数据集: {path}\n请参考 datasets/README.md 准备 golden_set.jsonl"
+            f"找不到数据集: {path}\n请参考 datasets/README.md 准备 "
         )
     text = path.read_text(encoding="utf-8")
     if path.suffix == ".jsonl":
@@ -129,7 +162,7 @@ def load_dataset(path: Path) -> list:
 # ============ 主流程 ============
 def main():
     dataset_path = (
-        Path(sys.argv[1]) if len(sys.argv) > 1 else (HERE / "datasets" / "golden_set.jsonl")
+        Path(sys.argv[1]) if len(sys.argv) > 1 else (HERE / "datasets" / f"{data_set_name}")
     )
     out_path = HERE / "eval_results.csv"
 
@@ -141,6 +174,21 @@ def main():
     embeddings = build_embeddings()
     judge_models = get_judge_models()
     print(f">>> 评估裁判模型（按问题轮询）: {judge_models}")
+
+    # 向量化(embeddings)自检：answer_relevancy 依赖它，调用失败时整列会成 NaN 且无报错。
+    # 生产检索走 LlamaIndex 自有封装，不代表这里 LangChain 的 OpenAI 兼容客户端可用，
+    # 因此单独探活，失败直接给出明确错误而不是闷成 nan。
+    # try:
+    #     _v = embeddings.embed_query("测试 embedding 是否可用")
+    #     if not _v:
+    #         raise ValueError("embedding 返回空向量")
+    #     print(f">>> embeddings 自检通过（维度={len(_v)}）")
+    # except Exception as e:
+    #     raise SystemExit(
+    #         f"[ embeddings 不可用 ] answer_relevancy 将全部为 NaN。请检查 mildoc_wxkf/.env 的 "
+    #         f"LLM_EMBEDDING_MODEL_NAME / LLM_EMBEDDING_BASE_URL / LLM_EMBEDDING_API_KEY。"
+    #         f"\n原始错误：{type(e).__name__}: {e}"
+    #     )
 
     # EVAL_LIMIT>0 时只跑前 N 条（用于快速试跑），默认 0 = 全部
     limit = int(os.getenv("EVAL_LIMIT", "0") or 0)
@@ -184,6 +232,9 @@ def main():
               "已跳过 context_precision / context_recall，仅评估 faithfulness / answer_relevancy。")
 
     # 3) 每个分片用对应裁判模型单独 evaluate，再合并明细 + 加权汇总
+    # RunConfig：max_workers=1 串行化所有 LLM/embedding 调用，避免瞬时并发打满免费 RPM；
+    # max_retries 与 ChatOpenAI 的退避重试叠加，偶发 429 也能恢复。
+    run_config = RunConfig(max_workers=1, timeout=120, max_retries=5)
     shard_dfs = []
     for mi, model in enumerate(judge_models):
         shard = shards[mi]
@@ -197,6 +248,7 @@ def main():
             metrics=metrics,
             llm=llm,
             embeddings=embeddings,
+            run_config=run_config,
         )
         print(result)
         df = result.to_pandas()

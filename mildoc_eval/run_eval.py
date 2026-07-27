@@ -281,65 +281,86 @@ def main():
                     print(f"    {name:18s}: {sub[name].mean():.4f}")
 
     # ---- 保存为 xlsx（CSV 分隔符难用，改用 Excel 原生格式）----
-    # openpyxl 拒绝写入 list/tuple/set/dict/NaN 这类单元格（报 "cannot be used in
-    # worksheets"）。这里统一清洗：集合类型拼成可读文本，NaN/None 转空串。
+    # 写入前对每格做四步处理，确保 openpyxl 一定能写、且尽量不丢信息：
+    #   1) list/tuple/set（如 retrieved_contexts）→ join 成纯文本
+    #   2) 超长(>32767 字符) → 截断到 Excel 单格上限
+    #   3) 正则清除 XML 非法控制字符（\x00-\x1f 中非法部分）
+    #   4) 逐格 try/except 兜底：真写不了的格留空，不连累整表
+    import re
+    _illegal = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+    excel_cell_max = 32767
+
     def _clean_cell(v):
-        # list/tuple/set（如 retrieved_contexts）拼成可读文本，这是触发
-        # "cannot be used in worksheets" 的元凶
+        # 1) 容器类型 → 纯文本
         if isinstance(v, (list, tuple, set)):
-            return "\n\n----\n\n".join(str(x) for x in v)
-        if isinstance(v, dict):
-            return str(v)
+            v = "\n\n----\n\n".join(str(x) for x in v)
+        elif isinstance(v, dict):
+            v = str(v)
+        # 空值 → None（Excel 空单元格）
         if v is None:
             return None
-        # NaN / None / np.nan 统一转 None（Excel 空单元格）
         try:
             if pd.isna(v):
                 return None
         except (TypeError, ValueError):
-            pass  # 非标量（理论上到不了这里）
-        # 基础类型：numpy 标量转原生，避免 openpyxl 不认
+            pass
+        # 基础类型 → 转 Python 原生，避免 numpy 标量不被 openpyxl 识别
         if isinstance(v, bool):
             return v
         if isinstance(v, int):
             return int(v)
         if isinstance(v, float):
             return float(v)
-        if isinstance(v, str):
-            return v
-        return str(v)  # 其它未知类型兜底转字符串
+        if not isinstance(v, str):
+            v = str(v)
+        # 2) 截断超长   3) 清除非法控制字符
+        if len(v) > excel_cell_max:
+            v = v[:excel_cell_max]
+        v = _illegal.sub("", v)
+        return v
 
-    for col in list(combined.columns):
-        combined[col] = combined[col].map(_clean_cell)
+    # 构建汇总表（整体加权均值 + 多模型分模型均值）
+    summary_df = pd.DataFrame(summary_rows) if summary_rows else pd.DataFrame()
+    if len(judge_models) > 1 and "_judge_model" in combined.columns:
+        per_model = []
+        for model in judge_models:
+            sub = combined[combined["_judge_model"] == model]
+            if sub.empty:
+                continue
+            row = {"裁判模型": model, "样本数": len(sub)}
+            for m in metrics:
+                name = m.name
+                if name in sub.columns:
+                    row[name] = round(float(sub[name].mean()), 4)
+            per_model.append(row)
+        if per_model:
+            summary_df = pd.concat(
+                [summary_df, pd.DataFrame([{}]), pd.DataFrame(per_model)],
+                ignore_index=True,
+            )
+
+    def _write_sheet(ws, df):
+        """逐格写入：先 _clean_cell 清洗（转文本/截断/清字符），再 try/except 兜底。"""
+        for c, col in enumerate(df.columns, start=1):
+            ws.cell(row=1, column=c, value=str(col))
+        for r, (_, row) in enumerate(df.iterrows(), start=2):
+            for c, col in enumerate(df.columns, start=1):
+                val = _clean_cell(row[col])
+                try:
+                    ws.cell(row=r, column=c, value=val)
+                except Exception:
+                    ws.cell(row=r, column=c, value="")  # 仅该格留空
 
     try:
-        from openpyxl import Workbook  # noqa: F401  确保引擎可用
-        summary_df = pd.DataFrame(summary_rows) if summary_rows else pd.DataFrame()
-        # 多模型时附上分模型汇总，方便对比
-        if len(judge_models) > 1 and "_judge_model" in combined.columns:
-            per_model = []
-            for model in judge_models:
-                sub = combined[combined["_judge_model"] == model]
-                if sub.empty:
-                    continue
-                row = {"裁判模型": model, "样本数": len(sub)}
-                for m in metrics:
-                    name = m.name
-                    if name in sub.columns:
-                        row[name] = round(float(sub[name].mean()), 4)
-                per_model.append(row)
-            if per_model:
-                summary_df = pd.concat(
-                    [summary_df, pd.DataFrame([{}]), pd.DataFrame(per_model)],
-                    ignore_index=True,
-                )
+        from openpyxl import Workbook
+        wb = Workbook()
+        ws_detail = wb.active
+        ws_detail.title = "明细"
+        _write_sheet(ws_detail, combined)
         if not summary_df.empty:
-            for col in list(summary_df.columns):
-                summary_df[col] = summary_df[col].map(_clean_cell)
-        with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-            combined.to_excel(writer, sheet_name="明细", index=False)
-            if not summary_df.empty:
-                summary_df.to_excel(writer, sheet_name="汇总", index=False)
+            ws_summary = wb.create_sheet("汇总")
+            _write_sheet(ws_summary, summary_df)
+        wb.save(out_path)
         print(f"\n已保存 Excel 报告（明细 + 汇总两个 sheet）到: {out_path}")
     except ImportError:
         # 没装 openpyxl 时优雅降级为 CSV，并提示安装
@@ -347,21 +368,13 @@ def main():
         combined.to_csv(csv_path, index=False)
         print(f"\n[提示] 未安装 openpyxl，已降级输出 CSV: {csv_path}")
         print("        安装 xlsx 支持：pip install openpyxl")
-    except Exception as e:  # 保存失败不影响结果展示
-        print(f"保存 Excel 失败（尝试强制转文本兜底）: {e}")
+    except Exception as e:
+        csv_path = out_path.with_suffix(".csv")
         try:
-            # 兜底：把所有内容强制转字符串，确保一定能写进 Excel
-            combined_s = combined.astype(str)
-            summary_s = summary_df.astype(str) if not summary_df.empty else summary_df
-            with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
-                combined_s.to_excel(writer, sheet_name="明细", index=False)
-                if not summary_df.empty:
-                    summary_s.to_excel(writer, sheet_name="汇总", index=False)
-            print(f"已用文本兜底方式保存: {out_path}")
-        except Exception as e2:
-            csv_path = out_path.with_suffix(".csv")
             combined.to_csv(csv_path, index=False)
-            print(f"Excel 仍失败，已降级输出 CSV: {csv_path}（原因: {e2}）")
+            print(f"\n保存 Excel 失败，已降级输出 CSV: {csv_path}（原因: {e}）")
+        except Exception as e2:
+            print(f"\n保存失败（CSV 降级也失败）: {e} | {e2}")
 
 
 if __name__ == "__main__":

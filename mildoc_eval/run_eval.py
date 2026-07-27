@@ -145,8 +145,6 @@ def get_judge_models() -> list:
     # 兜底：没配 JUDGE_MODELS 时退化为生产模型单例（行为与改动前一致）
     return models or [Config.LLM_MODEL_NAME]
 
-data_set_name = 'golden_set1.jsonl'
-
 # ============ 数据集加载 ============
 def load_dataset(path: Path) -> list:
     if not path.exists():
@@ -160,11 +158,14 @@ def load_dataset(path: Path) -> list:
 
 
 # ============ 主流程 ============
+data_set_name = 'golden_set2.jsonl'
 def main():
+    # 数据集目录
     dataset_path = (
         Path(sys.argv[1]) if len(sys.argv) > 1 else (HERE / "datasets" / f"{data_set_name}")
     )
-    out_path = HERE / "eval_results.xlsx"
+    # 结果输出目录
+    out_path = HERE / "eval_results2.xlsx"
 
     records = load_dataset(dataset_path)
     if not records:

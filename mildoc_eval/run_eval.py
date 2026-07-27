@@ -363,18 +363,16 @@ def main():
         wb.save(out_path)
         print(f"\n已保存 Excel 报告（明细 + 汇总两个 sheet）到: {out_path}")
     except ImportError:
-        # 没装 openpyxl 时优雅降级为 CSV，并提示安装
-        csv_path = out_path.with_suffix(".csv")
-        combined.to_csv(csv_path, index=False)
-        print(f"\n[提示] 未安装 openpyxl，已降级输出 CSV: {csv_path}")
-        print("        安装 xlsx 支持：pip install openpyxl")
+        # 未安装 openpyxl 则无法生成 xlsx；CSV 分隔符难用、Excel 导入切割易错乱、
+        # 可读性差，故不再降级输出 CSV，直接提示安装依赖后退出。
+        raise SystemExit(
+            "\n[缺少依赖] 未安装 openpyxl，无法生成 xlsx 报告。\n"
+            "        请先安装：pip install openpyxl\n"
+            "        （已移除 CSV 降级：CSV 在 Excel 中导入切割易错乱、可读性差）"
+        )
     except Exception as e:
-        csv_path = out_path.with_suffix(".csv")
-        try:
-            combined.to_csv(csv_path, index=False)
-            print(f"\n保存 Excel 失败，已降级输出 CSV: {csv_path}（原因: {e}）")
-        except Exception as e2:
-            print(f"\n保存失败（CSV 降级也失败）: {e} | {e2}")
+        # 保存失败直接报错退出，便于定位问题（不再降级为 CSV）
+        raise SystemExit(f"\n保存 Excel 失败：{e}")
 
 
 if __name__ == "__main__":

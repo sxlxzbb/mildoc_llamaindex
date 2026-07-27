@@ -281,11 +281,36 @@ def main():
                     print(f"    {name:18s}: {sub[name].mean():.4f}")
 
     # ---- 保存为 xlsx（CSV 分隔符难用，改用 Excel 原生格式）----
-    # retrieved_contexts 是 list，直接写 Excel 会报错，先拼成可读文本。
-    if "retrieved_contexts" in combined.columns:
-        combined["retrieved_contexts"] = combined["retrieved_contexts"].apply(
-            lambda c: "\n\n----\n\n".join(c) if isinstance(c, (list, tuple)) else c
-        )
+    # openpyxl 拒绝写入 list/tuple/set/dict/NaN 这类单元格（报 "cannot be used in
+    # worksheets"）。这里统一清洗：集合类型拼成可读文本，NaN/None 转空串。
+    def _clean_cell(v):
+        # list/tuple/set（如 retrieved_contexts）拼成可读文本，这是触发
+        # "cannot be used in worksheets" 的元凶
+        if isinstance(v, (list, tuple, set)):
+            return "\n\n----\n\n".join(str(x) for x in v)
+        if isinstance(v, dict):
+            return str(v)
+        if v is None:
+            return None
+        # NaN / None / np.nan 统一转 None（Excel 空单元格）
+        try:
+            if pd.isna(v):
+                return None
+        except (TypeError, ValueError):
+            pass  # 非标量（理论上到不了这里）
+        # 基础类型：numpy 标量转原生，避免 openpyxl 不认
+        if isinstance(v, bool):
+            return v
+        if isinstance(v, int):
+            return int(v)
+        if isinstance(v, float):
+            return float(v)
+        if isinstance(v, str):
+            return v
+        return str(v)  # 其它未知类型兜底转字符串
+
+    for col in list(combined.columns):
+        combined[col] = combined[col].map(_clean_cell)
 
     try:
         from openpyxl import Workbook  # noqa: F401  确保引擎可用
@@ -308,6 +333,9 @@ def main():
                     [summary_df, pd.DataFrame([{}]), pd.DataFrame(per_model)],
                     ignore_index=True,
                 )
+        if not summary_df.empty:
+            for col in list(summary_df.columns):
+                summary_df[col] = summary_df[col].map(_clean_cell)
         with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
             combined.to_excel(writer, sheet_name="明细", index=False)
             if not summary_df.empty:
@@ -320,7 +348,20 @@ def main():
         print(f"\n[提示] 未安装 openpyxl，已降级输出 CSV: {csv_path}")
         print("        安装 xlsx 支持：pip install openpyxl")
     except Exception as e:  # 保存失败不影响结果展示
-        print(f"保存 Excel 失败（不影响结果）: {e}")
+        print(f"保存 Excel 失败（尝试强制转文本兜底）: {e}")
+        try:
+            # 兜底：把所有内容强制转字符串，确保一定能写进 Excel
+            combined_s = combined.astype(str)
+            summary_s = summary_df.astype(str) if not summary_df.empty else summary_df
+            with pd.ExcelWriter(out_path, engine="openpyxl") as writer:
+                combined_s.to_excel(writer, sheet_name="明细", index=False)
+                if not summary_df.empty:
+                    summary_s.to_excel(writer, sheet_name="汇总", index=False)
+            print(f"已用文本兜底方式保存: {out_path}")
+        except Exception as e2:
+            csv_path = out_path.with_suffix(".csv")
+            combined.to_csv(csv_path, index=False)
+            print(f"Excel 仍失败，已降级输出 CSV: {csv_path}（原因: {e2}）")
 
 
 if __name__ == "__main__":

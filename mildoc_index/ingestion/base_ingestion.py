@@ -289,10 +289,4 @@ class BaseDocumentIngestionPipeline:
         except Exception:
             logger.exception(f"从 docstore 删除失败：{doc_path_name}")
 
-        # 3. 清理 ingestion cache（缓存 key 为内容 hash，无法按文档精确删除，只能整体 clear）
-        try:
-            self.ingestion_cache.clear()
-            logger.info(f"已清理 ingestion cache：{doc_path_name}")
-        except Exception:
-            logger.exception(f"清理 ingestion cache 失败：{doc_path_name}")
 

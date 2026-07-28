@@ -290,7 +290,7 @@ class BaseRetrievalPipeline:
             text_qa_template=QA_PROMPT,
         )
 
-        # 擦护心引擎
+        # 查询引擎
         self._query_engine = RetrieverQueryEngine.from_args(
             retriever=retriever,
             node_postprocessors=[RerankPostprocessor()],

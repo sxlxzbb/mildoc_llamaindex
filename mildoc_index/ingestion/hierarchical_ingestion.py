@@ -143,6 +143,28 @@ class HierarchicalDocumentIngestionPipeline(BaseDocumentIngestionPipeline):
 
             logger.info(f"开始处理文档:{file_name}")
 
+            # 0) 覆盖上传 / 内容变化保护：
+            #    若同一 doc_id 的文档已存在于 docstore，且内容（hash）已变化，则先清理其旧
+            #    索引（Milvus 向量 + docstore 父/子节点 + ingestion cache），再走正常摄取。
+            #    这样「只改了文档一小部分后重传」不会再产生重复索引。
+            #    若内容完全一致（hash 相同），则不清理，交给下方 IngestionCache 命中跳过，
+            #    从而保留缓存去重能力（避免每次重传都清空缓存、全量重处理）。
+            doc_id = doc.doc_id
+            if doc_id:
+                _changed = False
+                try:
+                    _existing = self.redis_document_store.get_document(doc_id)
+                    if _existing is not None and _existing.hash != doc.hash:
+                        _changed = True
+                except Exception:
+                    logger.exception(
+                        f"判断文档内容是否变化失败，按「已变化」处理以规避重复索引：{doc_id}"
+                    )
+                    _changed = True
+                if _changed:
+                    logger.info(f"检测到文档内容变化（覆盖上传），先清理旧索引再重新摄取：{doc_id}")
+                    self.delete_document(doc_id)
+
             # 1) 唯一一次解析：全部节点（父+子）写 docstore，并做缓存去重
             if file_type in ('.markdown', '.md'):
                 all_nodes = self.docstore_markdown_pipeline.run(

@@ -356,9 +356,9 @@ class MinioEventHandler:
 
 
 if __name__ == '__main__':
-    bucket_name = Config.MINIO_BUCKET
+    bucket_name = Config.MINIO_BUCKET_HIER
     # object_name = '公司文档/汇视威人事管理流程.docx'
-    object_name = '公司文档/MongoDB-test.md'
+    object_name = '层次解析-公司文档/产品购销合同.doc'
 
     handler = MinioEventHandler()
     handler._process_single_object(bucket_name, object_name)

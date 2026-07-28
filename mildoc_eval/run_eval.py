@@ -158,14 +158,14 @@ def load_dataset(path: Path) -> list:
 
 
 # ============ 主流程 ============
-data_set_name = 'golden_set2.jsonl'
+data_set_name = 'golden_set.jsonl'
 def main():
     # 数据集目录
     dataset_path = (
         Path(sys.argv[1]) if len(sys.argv) > 1 else (HERE / "datasets" / f"{data_set_name}")
     )
     # 结果输出目录
-    out_path = HERE / "eval_results2.xlsx"
+    out_path = HERE / "eval_results.xlsx"
 
     records = load_dataset(dataset_path)
     if not records:

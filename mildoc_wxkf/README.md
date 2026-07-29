@@ -16,13 +16,13 @@ flowchart LR
     MILVUS[(Milvus<br/>稠密 + 稀疏)]
     MEM[(Redis + MySQL<br/>对话记忆)]
 
-    USER -->|提问 (SSE POST)| APP
+    USER -->|提问（/SSE POST）| APP
     APP --> ENGINE
-    ENGINE -->|① 压缩问题 (LLM)| DASH
+    ENGINE -->|① 压缩问题 （LLM）| DASH
     ENGINE --> RET
     RET -->|② 混合检索| MILVUS
     RET --> RERANK
-    RERANK -->|③ 精排 (Rerank)| DASH
+    RERANK -->|③ 精排 （Rerank）| DASH
     RERANK --> SYNTH
     SYNTH -->|④ 流式生成| DASH
     SYNTH -->|SSE 流| USER

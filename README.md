@@ -53,7 +53,8 @@ flowchart LR
     subgraph infra["基础设施"]
         MINIO[(MinIO<br/>对象存储)]
         MILVUS[(Milvus<br/>稠密向量 + 稀疏BM25)]
-        REDIS[(Redis<br/>docstore/indexstore/cache<br/>+ 对话记忆)]
+        MYSQL[(MySQL<br>长期对话记忆)]
+        REDIS[(Redis<br/>docstore/indexstore/cache<br/>+ 临时对话记忆)]
         DASH[(阿里云百炼<br/>embedding / LLM / rerank)]
     end
 
@@ -71,18 +72,20 @@ flowchart LR
     end
 
     ADMIN -->|上传文档| MINIO
-    MINIO -->|对象事件通知| INDEX
+    MINIO -->|对象事件| INDEX
     INDEX -->|embedding 向量化| DASH
     INDEX -->|向量写入| MILVUS
     INDEX -->|节点/索引/缓存| REDIS
 
-    USER -->|提问| WXKF
-    WXKF -->|query embedding| DASH
-    WXKF -->|混合检索| MILVUS
-    WXKF -->|重排序| DASH
-    WXKF -->|对话记忆读写| REDIS
-    WXKF -->|生成回答| DASH
-    WXKF -->|答案+来源| USER
+    USER -->|1.提问| WXKF
+    REDIS -->|2.读取近N条记忆| WXKF
+    WXKF -->|3.问题压缩后query embedding| DASH
+    WXKF -->|4.混合检索| MILVUS
+    WXKF -->|5.重排序| DASH
+    WXKF -->|6.短期记忆| REDIS
+    WXKF -->|7.长期记忆| MYSQL
+    WXKF -->|8.生成回答| DASH
+    WXKF -->|9.答案+来源| USER
 ```
 
 ### 关键数据流
@@ -150,7 +153,7 @@ flowchart TB
 
 ### 5.1 默认摄取（default）
 
-- 文本类（`.txt/.pdf/.doc/.docx/.xlsx/.pptx`）→ `SentenceSplitter` 按 `chunk_size` 切块、`chunk_overlap` 重叠；
+- 文本类（`.txt`）→ `SentenceSplitter` 按 `chunk_size` 切块、`chunk_overlap` 重叠；
 - Markdown 类（`.md`）→ 先 `MarkdownNodeParser` 保留标题层级，再用 `SentenceSplitter` 按段落细化；
 - 两种都接 `TitleExtractor` 抽取标题，然后**全部节点一次性 embedding**，写入 Milvus（稠密 + 稀疏 BM25 双索引）与 Redis docstore / index store / ingestion cache。
 
@@ -164,7 +167,9 @@ flowchart TB
 
 ### 5.3 删除 / 重传保护
 
-文档删除或重传时，先 `load_collection` 确保集合在内存，再 `delete`（Milvus 按 doc_id 删向量）→ `delete_ref_doc` **级联清理** docstore 中父 / 子节点（仅 `delete_document` 会漏删子节点，导致孤儿节点）→ 清空 ingestion cache。重传时若 doc_id 已存在会先执行上述清理，避免残留。
+1. 文档删除或重传时，先 `load_collection` 确保集合在内存，再 `delete`（Milvus 按 doc_id 删向量）→ `delete_ref_doc` **级联清理** docstore 中父 / 子节点（仅 `delete_document` 会漏删子节点，导致孤儿节点）。
+2. 重复上传文档时，先通过doc_id检测doc_store是否已经存在，如果存在则比较hash值是否相等，如果不相等则说明文档内容有变化，先删除(避免残留)已有文档(删除流程)，如果hash值相等则说明文件重复上传，直接交给管道(管道会跳过该文档)。
+3. 为什么hash值不同的时候要先删除文档？因为如果直接交给管道，管道不会自动删除已有文档，而是直接上传，这样可能会造成孤儿节点。
 
 ### 5.4 摄取流程图
 
@@ -194,7 +199,7 @@ flowchart TB
     H2 --> H3[筛出 leaf 叶子节点<br/>单独 embedding]
     H3 --> H4[(仅 leaf 写 Milvus<br/>父节点不进向量库)]
 
-    RM[ObjectRemoved / 重传] --> DEL[load_collection<br/>→ Milvus delete<br/>→ delete_ref_doc 级联清理<br/>→ 清 ingestion cache]
+    RM[ObjectRemoved / 重传] --> DEL[load_collection<br/>→ Milvus delete<br/>→ delete_ref_doc 级联清理<br/>]
 ```
 
 ---
@@ -205,7 +210,7 @@ flowchart TB
 
 ### 6.1 默认混合检索（default）
 
-- 多轮对话时，`CondenseQuestionChatEngine` 先用历史把追问**压缩成独立问题**；
+- 多轮对话时，`CondenseQuestionChatEngine` 先用历史把追问**压缩成独立问题**（如果想要保留原样的多轮对话，可以使用ContextChatEngine）；
 - query 同时做**稠密 embedding** 与 **BM25 稀疏** 编码，向 Milvus 发两路 `AnnSearchRequest`；
 - 两路结果用 **`RRFRanker`** 按 reciprocal rank 融合，互补语义召回与关键词精确匹配；
 - `RerankPostprocessor` 调用百炼 **Rerank** 对融合结果精排取 `TOP_N`；
@@ -242,11 +247,10 @@ flowchart TB
 
 1. **稠密 + 稀疏混合检索**：语义向量召回解决「换个说法也能懂」，BM25 关键词召回解决「专有名词 / 精确匹配」，两路 `AnnSearchRequest` 经 `RRFRanker` 融合。
 2. **层次化解析可选**：`NODE_PARSER_MODE=hierarchical` 时启用 `HierarchicalNodeParser`，保留「文档 → 章节 → 段落」层级，利于长文档定位。两种模式各自独立桶 / 集合，互不干扰。
-3. **重传 / 覆盖保护**：文档重传时先删旧数据再写新数据，且删除逻辑用 `delete_ref_doc` **级联清理父/子节点**，避免残留孤儿节点（仅 `delete_document` 会漏删子节点）。
+3. **重传 / 覆盖保护**：文档重传时如果内容有变化先删旧数据再写新数据，且删除逻辑用 `delete_ref_doc` **级联清理父/子节点**，避免残留孤儿节点（仅 `delete_document` 会漏删子节点）。
 4. **增量实时摄取**：监听 MinIO 事件触发单对象解析，无需停服全量重建；并配有 `full-refresh` / `backfill` 模式应对初始化与补漏。
 5. **可配置索引调优**：`index_type / nlist / metric_type / nprobe` 均可通过 `.env` 配置（建索引类参数改后需删集合重摄取，查询类参数即时生效）。
-6. **流式体验 + 可追溯**：SSE 流式生成，答案附带按 `file_path` 去重的引用来源。
-7. **多轮对话记忆**：记忆服务同时落 Redis（快）与 MySQL（持久），支撑上下文连续。
+6. **多轮对话记忆**：记忆服务同时落 Redis（快）与 MySQL（持久），支撑上下文连续。
 
 ---
 
@@ -260,28 +264,25 @@ flowchart TB
 
 ### 瓶颈点
 
-| # | 瓶颈 | 原因 | 解决思路 |
-|---|---|---|---|
-| 1 | **百炼 API 限流（首号瓶颈）** | embedding / LLM / rerank 全部走百炼，有 QPS / 并发上限；单问题多次调用叠加后极易触顶 | 申请提额；引入**语义缓存**（相似问题直接命中答案或检索结果）；非多轮场景可跳过问题压缩；异步化 + 队列削峰 |
-| 2 | **Flask 单进程** | `app.run(processes=1, threaded=True)`，且 SSE 流式响应会**长期占用线程**直到生成完成，高并发下线程池耗尽 → 排队 / 超时 | 用 **gunicorn / uvicorn 多 worker** 部署；长连接考虑 WebSocket；生成放入后台任务 + 推送 |
-| 3 | **Milvus 检索性能** | 默认 `index_type=FLAT` 为暴力全量扫描 O(N)，数据量增大后单查变慢、吃 CPU | 改为 **IVF_FLAT / IVF_SQ8** 等索引并调 `nlist / nprobe`；Milvus 横向扩容（分片 / 副本）；查询侧加缓存 |
-| 4 | **无检索结果缓存** | 每个问题都重新 embedding + 查 Milvus + rerank，重复问题也走全链路 | 加**语义缓存**：对 query embedding 做相似度命中，直接复用检索结果 / 答案 |
-| 5 | **记忆存储（MySQL / Redis）** | 每轮对话写入记忆，高并发下 DB 连接池可能成为瓶颈 | 连接池调优、批量 / 异步落库 |
-| 6 | **共享客户端连接池** | embedding / LLM / rerank 的 HTTP 客户端若无连接池上限与并发信号量，高并发下会被打满 | 设置连接池上限 + 信号量限流；对外部 API 做统一限流与降级 |
+| # | 瓶颈 | 原因 | 解决思路                                                             |
+|---|---|---|------------------------------------------------------------------|
+| 1 | **百炼 API 限流（首号瓶颈）** | embedding / LLM / rerank 全部走百炼，有 QPS / 并发上限；单问题多次调用叠加后极易触顶 | 申请提额；引入**语义缓存**（相似问题直接命中答案或检索结果）；非多轮场景可跳过问题压缩；异步化 + 队列削峰         |
+| 2 | **流式响应长期占用线程** | SSE 流式响应会**长期占用线程**直到生成完成，高并发下线程池耗尽 → 排队 / 超时 | 用 **gunicorn / uvicorn 多 worker** 部署；长连接考虑 WebSocket；生成放入后台任务 + 推送 |
+| 3 | **Milvus 检索性能** | index_type和nlist在摄取文档之后无法再改动，数据量超过预期导致检索变慢 | 调整nprobe(调大后可能会影响到搜索精度)；Milvus 横向扩容（分片 / 副本）；查询侧加缓存              |
+| 4 | **无检索结果缓存** | 每个问题都重新 embedding + 查 Milvus + rerank，重复问题也走全链路 | 加**语义缓存**：对 query embedding 做相似度命中，直接复用检索结果 / 答案                 |
+| 5 | **记忆存储（MySQL / Redis）** | 每轮对话写入记忆，高并发下 DB 连接池可能成为瓶颈 | 批量 / 异步落库，通过队列削峰                                                 |
+| 6 | **共享客户端连接池** | embedding / LLM / rerank 的 HTTP 客户端若无连接池上限与并发信号量，高并发下会被打满 | 设置连接池上限 + 信号量限流；对外部 API 做统一限流与降级                                 |
 
 ---
 
 ## 九、后续优化点
-
+- **查询重写 / 查询转换**：评估的时候发现当问题问的比较笼统(很宽泛)、一下提出好几个问题的时候检索效果不是太好，可以考虑引入查询重写/转换；或者也可以引导用户更清晰的表达问题。
+- **引入对表格友好的解析器**：评估的时候发现当标准答案里包含的表格很多时，召回率偏低，可以考虑引入（比如MarkdownElementNodeParser）。
+- **使用更稳定的文档解析工具**：在将pdf/office文档转为md文档的时候，现有逻辑（pdf使用pymupdf4llm，office文档使用libre+pymupdf4llm）有时候对标题识别不准(有时候会把正文内容识别为标题)，导致正文内容被截断，影响召回，可以考虑使用更可靠的云服务。
 - **语义 / 答案缓存**：相同 / 相似问题直接命中，显著削减百炼调用与 Milvus 压力。
-- **多 worker 部署**：用 gunicorn 多进程替换单进程 Flask，消除 SSE 长连接对单进程的占用。
-- **索引优化**：FLAT → IVF 系列（+ 量化），大数据量下用 GPU 索引进一步提速。
-- **Rerank 本地化**：把远程 Rerank 调用替换为本地轻量重排模型，减少一次外部往返与限流风险。
-- **异步化**：摄取与问答引入了队列 / Celery，把重活（embedding、生成）异步化，前端轮询或推送。
-- **限流与降级**：百炼限流时返回兜底答案 / 引导话术，避免链路雪崩。
-- **监控与指标**：采集检索耗时、命中率、外部 API 限流次数、流式首字延迟，驱动进一步调优。
-- **摄取并行**：通过 `IngestionPipeline.run(num_workers=N)` 把文档切片后的 embedding 并行起来（注意百炼 embedding 单请求上限 10 条，`embed_batch_size` 不可超过此值）。
-- **多租户 / 集合隔离**：按业务线隔离 Milvus 集合与 Redis 命名空间。
+- **Rerank 本地化**：如果需要可以考虑把远程 Rerank 调用替换为本地轻量重排模型，减少一次外部往返与限流风险。
+- **摄取并行**：通过 `IngestionPipeline.run(num_workers=N)` 把文档切片后的 embedding 并行起来（注意百炼 embedding 单请求上限（我的账号目前是 10 条），`embed_batch_size` 不可超过此值）。
+- **现在对多图片的文档检索效果比较差**：可以考虑使用第三方工具(比如MinerU)结合OCR实现对图片的精准处理（也可以将图片上传到云服务后，想办法在检索结果里直接保留图片，本项目试过这种方法，暂时没成功，但是感觉还可以继续探讨）
 
 ---
 
@@ -299,7 +300,7 @@ flowchart TB
     end
 
     subgraph 解析扩展["② 解析能力扩展"]
-        P1[更多格式<br/>PPT / Excel / 图片OCR / 音视频转写]
+        P1[更多格式<br/> 图片OCR / 音视频转写]
         P2[表格 / 公式 / 图表结构化]
         P3[HTML / 富文本深度清洗]
     end
@@ -307,43 +308,40 @@ flowchart TB
     subgraph 模型扩展["③ 模型与供应商扩展"]
         M1[多供应商混用<br/>embedding / LLM / rerank]
         M2[本地模型<br/>vLLM / Ollama / bge-reranker]
-        M3[多语言 / 跨语言嵌入]
     end
 
     subgraph 检索扩展["④ 检索策略扩展"]
-        R1[GraphRAG / 知识图谱]
-        R2[Agentic RAG<br/>检索决策 + 工具调用]
-        R3[HyDE / 多查询改写]
-        R4[父子文档 / 元数据过滤检索]
+        R1[多查询改写]
+        R2[元数据过滤检索]
+        R3[GraphRAG / 知识图谱]
     end
 
     subgraph 通道扩展["⑤ 接入渠道扩展"]
-        C1[企业微信 / 钉钉 / 飞书]
-        C2[Slack / Teams / Webhook]
-        C3[开放 API / SDK 供第三方集成]
+        C1[钉钉 / 飞书]
+        C2[开放 API / SDK 供第三方集成]
     end
 
     subgraph 智能扩展["⑥ 智能与运营扩展"]
         E1[用户反馈闭环<br/>点赞/点踩 → 微调 rerank]
-        E2[RAG 自动评估<br/>Ragas / 召回率 / 相关性]
-        E3[运营分析后台<br/>热点 / 未命中问题]
-        E4[细粒度权限<br/>按角色过滤检索范围]
+        E2[运营分析后台<br/>热点 / 未命中问题]
+        E3[细粒度权限<br/>按角色过滤检索范围]
+        E4[接入mcp / 本地工具使用SKILL</br>分析用户意图决定是调用工具还是走RAG]
     end
 ```
 
 ### 扩展方向一览
 
-| # | 方向 | 现状 / 切入点 | 扩展方式 |
-|---|---|---|---|
-| 1 | **数据源接入** | 仅 MinIO 事件触发 | 新增数据源适配器即可（如 S3/OSS 事件、数据库 CDC、网页爬虫），复用现有 `SimpleObjectParser → IngestionPipeline` 链路 |
-| 2 | **解析 / 文件格式** | 统一 `SimpleObjectParser` | 扩展解析器支持 PPT/Excel/图片 OCR/音视频转写；增加表格、公式、图表的结构化抽取 |
-| 3 | **模型与供应商** | 全部走百炼兼容端点 | 抽象 `BaseEmbedding / BaseLLM / 重排` 接口，可混用不同厂商，或切换本地模型（vLLM、Ollama、bge-reranker）降本提速 |
-| 4 | **检索策略升级** | 稠密 + 稀疏 + Rerank | 引入 GraphRAG、Agentic RAG（检索决策 + 工具调用）、HyDE、多查询改写；增加父子文档检索与基于元数据的过滤检索 |
-| 5 | **接入渠道** | 微信客服 / 浏览器 | 复用 `chat` 层 RAG 链路，新增企业微信 / 钉钉 / 飞书 / Slack 等渠道适配；开放 API / SDK 供第三方集成 |
-| 6 | **反馈闭环与微调** | 仅记录对话记忆 | 收集用户对答案的点赞 / 点踩，反哺重排模型微调或检索权重调优 |
-| 7 | **评估体系** | 无自动评估 | 接入 Ragas 等框架，对召回率、答案相关性、忠实度做自动化评测，量化迭代效果 |
-| 8 | **运营分析后台** | 仅管理文档 | 统计热点问题、未命中 / 低置信度问题，指导文档补充与 Prompt 优化 |
-| 9 | **细粒度权限 / 租户** | 集合级隔离 | 在检索侧按用户角色 / 组织过滤 `file_path` 等元数据，实现「不同人看到不同文档范围」的权限隔离 |
-| 10 | **多语言 / 跨语言** | 中文为主 | 切换多语言 / 跨语言嵌入模型，支持中英混合或跨语言检索 |
+| # | 方向             | 现状 / 切入点                | 扩展方式                                                                                 |
+|---|----------------|-------------------------|--------------------------------------------------------------------------------------|
+| 1 | **数据源接入**      | 仅 MinIO 事件触发            | 新增数据源适配器即可（如 S3/OSS 事件、数据库 CDC、网页爬虫），复用现有 `SimpleObjectParser → IngestionPipeline` 链路 |
+| 2 | **解析 / 文件格式**  | 统一 `SimpleObjectParser` | 扩展解析器支持 PPT/Excel(现阶段的处理比较粗暴)/图片 OCR/音视频转写；增加表格、公式、图表的结构化抽取                          |
+| 3 | **模型与供应商**     | 全部走百炼兼容端点               | 抽象 `BaseEmbedding / BaseLLM / 重排` 接口，可混用不同厂商，或切换本地模型（vLLM、Ollama、bge-reranker）降本提速   |
+| 4 | **检索策略升级**     | 稠密 + 稀疏 + Rerank        | 引入 GraphRAG；多查询改写；增加基于元数据的过滤检索                                                       |
+| 5 | **接入渠道**       | 微信客服 / 浏览器              | 复用 `chat` 层 RAG 链路，新增 钉钉 / 飞书 / Slack 等渠道适配；开放 API / SDK 供第三方集成                      |
+| 6 | **反馈闭环与微调**    | 仅记录对话记忆                 | 收集用户对答案的点赞 / 点踩，反哺重排模型微调或检索权重调优                                                      |
+| 7 | **评估体系**       | 无自动评估                   | 接入 Ragas 等框架，对召回率、答案相关性、忠实度做自动化评测，量化迭代效果                                             |
+| 8 | **运营分析后台**     | 仅管理文档                   | 统计热点问题、未命中 / 低置信度问题，指导文档补充与 Prompt 优化                                                |
+| 9 | **细粒度权限 / 租户** | 集合级隔离                   | 在检索侧按用户角色 / 组织过滤 `file_path` 等元数据，实现「不同人看到不同文档范围」的权限隔离                               |
+| 10 | **智能体方向扩展**    | 用户提问直接检索                | 引入mcp/skill，识别用户意图决定是调工具还是检索或者闲聊                                                     |
 
 > 上述扩展大多**不破坏现有分层**：数据源层只需新增适配器、模型层只需替换接口实现、检索层只需叠加新策略、渠道层只需复用 `chat` 的 RAG 链路，因而整体演进成本可控。

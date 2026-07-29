@@ -84,6 +84,7 @@ class HierarchicalDocumentIngestionPipeline(BaseDocumentIngestionPipeline):
             transformations=[
                 HierarchicalNodeParser.from_defaults(
                     chunk_sizes=Config.HIERARCHICAL_CHUNK_SIZES,
+                    chunk_overlap=Config.OVERLAP_SIZE
                 ),
                 TitleExtractor(nodes=Config.TITLE_EXTRACTOR_NODES),
             ],

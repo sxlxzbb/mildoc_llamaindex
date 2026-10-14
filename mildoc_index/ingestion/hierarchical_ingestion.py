@@ -198,6 +198,7 @@ class HierarchicalDocumentIngestionPipeline(BaseDocumentIngestionPipeline):
             for n in leaf_nodes:
                 # 单独为叶子做 embedding（父节点不嵌入，省一次嵌入调用）
                 n.embedding = Settings.embed_model.get_text_embedding(
+                    # metadata_mode参数的作用是元数是否拼接到正文后面一起发给向量模型
                     n.get_content(metadata_mode=MetadataMode.NONE)
                 )
             self.milvus_vector_store.add(leaf_nodes)

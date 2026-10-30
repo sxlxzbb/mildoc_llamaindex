@@ -213,7 +213,8 @@ class BaseRetrievalPipeline:
 
             self._vector_store = MilvusVectorStore(
                 uri=f"http://{Config.MILVUS_HOST}:{Config.MILVUS_PORT}",
-                token=None,  # 使用 user/password 认证
+                token='',  # 使用 user/password 认证
+                use_async_client=False,
                 user=Config.MILVUS_USER,
                 password=Config.MILVUS_PASSWORD,
                 db_name=Config.MILVUS_DATABASE,

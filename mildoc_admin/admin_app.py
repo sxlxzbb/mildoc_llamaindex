@@ -68,7 +68,9 @@ minio_client = _get_minio_client()
 # 初始化 Milvus API
 milvus_client = MilvusClient(
     uri=f"http://{Config.MILVUS_HOST}:{Config.MILVUS_PORT}",
-    token=f"{Config.MILVUS_USER}:{Config.MILVUS_PASSWORD}",
+    # token=f"{Config.MILVUS_USER}:{Config.MILVUS_PASSWORD}",
+    user=Config.MILVUS_USER,
+    password=Config.MILVUS_PASSWORD,
     db_name=Config.MILVUS_DATABASE
 )
 

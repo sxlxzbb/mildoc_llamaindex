@@ -126,7 +126,8 @@ class BaseDocumentIngestionPipeline:
 
         self.milvus_vector_store = MilvusVectorStore(
             uri=f"http://{Config.MILVUS_HOST}:{Config.MILVUS_PORT}",
-            token=None,  # 用的是 user/password 认证，所以 token 留空
+            token='',  # 用的是 user/password 认证，所以 token 留空
+            use_async_client=False,  # 同步程序，禁用异步客户端（否则无事件循环会报错）
             user=Config.MILVUS_USER,        # 经 **kwargs 透传给 MilvusClient
             password=Config.MILVUS_PASSWORD,  # 经 **kwargs 透传给 MilvusClient
             db_name=Config.MILVUS_DATABASE,  # 指定数据库名，经 **kwargs 透传
